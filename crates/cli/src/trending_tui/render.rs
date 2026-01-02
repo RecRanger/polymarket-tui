@@ -77,12 +77,16 @@ pub fn get_clicked_yield_sort(x: u16, y: u16, _size: Rect) -> Option<YieldSortBy
         return None;
     }
 
-    // Tab labels: "By Return" (9) + " " (1) + "By Volume" (9) + " " (1) + "By End Date" (11)
-    // Positions:   0-8              9         10-18             19        20-30
+    // Actual rendering: " By Return   By Volume   By End Date"
+    // " By Return" = positions 0-9 (10 chars)
+    // "   " = positions 10-12 (3 space divider)
+    // "By Volume" = positions 13-21 (9 chars)
+    // "   " = positions 22-24 (3 space divider)
+    // "By End Date" = positions 25-35 (11 chars)
     let tab_ranges = [
-        (0u16, 10u16, YieldSortBy::Return),   // "By Return" + divider
-        (10u16, 20u16, YieldSortBy::Volume),  // "By Volume" + divider
-        (20u16, 32u16, YieldSortBy::EndDate), // "By End Date"
+        (0u16, 13u16, YieldSortBy::Return),   // " By Return" + divider
+        (13u16, 25u16, YieldSortBy::Volume),  // "By Volume" + divider
+        (25u16, 40u16, YieldSortBy::EndDate), // "By End Date"
     ];
 
     for (start, end, sort) in tab_ranges {
