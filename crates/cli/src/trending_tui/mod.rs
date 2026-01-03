@@ -6,8 +6,8 @@ mod state;
 
 use {
     chrono::{DateTime, Utc},
-    ratatui::layout::{Constraint, Direction, Layout, Rect, Spacing},
-    render::{render, truncate},
+    ratatui::layout::{Constraint, Direction, Layout, Rect},
+    render::{ClickedTab, render, truncate},
     state::{
         EventFilter, EventTrades, FocusedPanel, MainTab, SearchMode, YieldOpportunity,
         YieldSearchResult,
@@ -75,11 +75,11 @@ fn calculate_panel_areas(
     show_logs: bool,
 ) -> (Rect, Rect, Rect, Rect, Rect, Rect) {
     let header_height = if is_in_filter_mode {
-        6
+        5
     } else {
-        4
+        2
     };
-    // Use Spacing::Overlap(1) to match render function's collapsed borders
+    // No overlap - all panels have full borders
     // Conditionally include logs area
     let constraints: Vec<Constraint> = if show_logs {
         vec![
@@ -97,7 +97,6 @@ fn calculate_panel_areas(
     };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .spacing(Spacing::Overlap(1))
         .constraints(constraints)
         .split(size);
 
@@ -108,19 +107,17 @@ fn calculate_panel_areas(
         Rect::default() // Empty rect when logs hidden
     };
 
-    // Main content split - also with collapsed borders
+    // Main content split - no overlap for full borders
     let main_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .spacing(Spacing::Overlap(1))
         .constraints([Constraint::Percentage(40), Constraint::Fill(1)])
         .split(chunks[1]);
 
     let events_list_area = main_chunks[0];
 
-    // Right side split (event details, markets, trades) - also with collapsed borders
+    // Right side split (event details, markets, trades) - no overlap for full borders
     let right_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .spacing(Spacing::Overlap(1))
         .constraints([
             Constraint::Length(8),
             Constraint::Length(7),
@@ -860,52 +857,64 @@ pub async fn run_trending_tui(
                     let term_size = terminal.size()?;
                     let size = Rect::new(0, 0, term_size.width, term_size.height);
 
-                    // Check for main tab clicks first (first line)
-                    if let Some(new_main_tab) =
-                        render::get_clicked_main_tab(mouse.column, mouse.row, size)
+                    // Check for tab clicks (first line - unified tabs)
+                    if let Some(clicked_tab) =
+                        render::get_clicked_tab(mouse.column, mouse.row, size)
                     {
-                        if app.main_tab != new_main_tab {
-                            app.main_tab = new_main_tab;
-                            // If switching to Yield tab and no data loaded, fetch it
-                            if new_main_tab == MainTab::Yield
-                                && app.yield_state.opportunities.is_empty()
-                                && !app.yield_state.is_loading
-                            {
-                                drop(app);
-                                spawn_yield_fetch(Arc::clone(&app_state));
-                            }
+                        match clicked_tab {
+                            ClickedTab::Trending => {
+                                if app.main_tab != MainTab::Trending
+                                    || app.event_filter != EventFilter::Trending
+                                {
+                                    app.main_tab = MainTab::Trending;
+                                    if let Some((order_by, limit)) =
+                                        switch_filter_tab(&mut app, EventFilter::Trending)
+                                    {
+                                        drop(app);
+                                        spawn_filter_fetch(Arc::clone(&app_state), order_by, limit);
+                                    }
+                                }
+                            },
+                            ClickedTab::Breaking => {
+                                if app.main_tab != MainTab::Trending
+                                    || app.event_filter != EventFilter::Breaking
+                                {
+                                    app.main_tab = MainTab::Trending;
+                                    if let Some((order_by, limit)) =
+                                        switch_filter_tab(&mut app, EventFilter::Breaking)
+                                    {
+                                        drop(app);
+                                        spawn_filter_fetch(Arc::clone(&app_state), order_by, limit);
+                                    }
+                                }
+                            },
+                            ClickedTab::New => {
+                                if app.main_tab != MainTab::Trending
+                                    || app.event_filter != EventFilter::New
+                                {
+                                    app.main_tab = MainTab::Trending;
+                                    if let Some((order_by, limit)) =
+                                        switch_filter_tab(&mut app, EventFilter::New)
+                                    {
+                                        drop(app);
+                                        spawn_filter_fetch(Arc::clone(&app_state), order_by, limit);
+                                    }
+                                }
+                            },
+                            ClickedTab::Yield => {
+                                if app.main_tab != MainTab::Yield {
+                                    app.main_tab = MainTab::Yield;
+                                    // If switching to Yield tab and no data loaded, fetch it
+                                    if app.yield_state.opportunities.is_empty()
+                                        && !app.yield_state.is_loading
+                                    {
+                                        drop(app);
+                                        spawn_yield_fetch(Arc::clone(&app_state));
+                                    }
+                                }
+                            },
                         }
                         continue;
-                    }
-
-                    // Check for sub-tab clicks (second line) based on main tab
-                    match app.main_tab {
-                        MainTab::Trending => {
-                            if let Some(new_filter) =
-                                render::get_clicked_tab(mouse.column, mouse.row, size)
-                            {
-                                if let Some((order_by, limit)) =
-                                    switch_filter_tab(&mut app, new_filter)
-                                {
-                                    drop(app);
-                                    spawn_filter_fetch(Arc::clone(&app_state), order_by, limit);
-                                }
-                                continue;
-                            }
-                        },
-                        MainTab::Yield => {
-                            if let Some(new_sort) =
-                                render::get_clicked_yield_sort(mouse.column, mouse.row, size)
-                            {
-                                if app.yield_state.sort_by != new_sort {
-                                    app.yield_state.sort_by = new_sort;
-                                    app.yield_state.sort_opportunities();
-                                    app.yield_state.selected_index = 0;
-                                    app.yield_state.scroll = 0;
-                                }
-                                continue;
-                            }
-                        },
                     }
 
                     let (_, events_list_area, ..) =
@@ -922,7 +931,7 @@ pub async fn run_trending_tui(
                         if panel == FocusedPanel::EventsList {
                             if app.main_tab == MainTab::Yield {
                                 // Yield tab: select yield opportunity or search result
-                                // Account for border (1) + header row (1) + title bar (1) = 3
+                                // Account for border (1) + header row (1) = 2
                                 // When searching/filtering, add 3 more for the input field
                                 let extra_offset = if app.yield_state.is_searching
                                     || app.yield_state.is_filtering
@@ -933,7 +942,7 @@ pub async fn run_trending_tui(
                                 };
                                 let relative_y = mouse
                                     .row
-                                    .saturating_sub(events_list_area.y + 3 + extra_offset)
+                                    .saturating_sub(events_list_area.y + 2 + extra_offset)
                                     as usize;
                                 let clicked_index = app.yield_state.scroll + relative_y;
 
@@ -949,8 +958,8 @@ pub async fn run_trending_tui(
                                 }
                             } else {
                                 // Trending tab: select event (List widget, no header row)
-                                // Account for border (1) + title bar (1) = 2
-                                let relative_y = mouse.row.saturating_sub(events_list_area.y + 2);
+                                // Account for border (1) = 1
+                                let relative_y = mouse.row.saturating_sub(events_list_area.y + 1);
                                 let clicked_index = app.scroll.events_list + relative_y as usize;
                                 let filtered_len = app.filtered_events().len();
 
@@ -1251,15 +1260,25 @@ pub async fn run_trending_tui(
                         }
                     },
                     KeyCode::Char('1') => {
-                        // Switch to Trending main tab (unless in search/filter mode)
+                        // Switch to Trending tab (unless in search/filter mode)
                         if app.main_tab == MainTab::Yield && app.yield_state.is_searching {
                             app.yield_state.add_search_char('1');
                             yield_search_debounce = Some(tokio::time::Instant::now());
                         } else if app.main_tab == MainTab::Yield && app.yield_state.is_filtering {
                             app.yield_state.add_filter_char('1');
-                        } else if !app.is_in_filter_mode() && app.main_tab != MainTab::Trending {
-                            app.main_tab = MainTab::Trending;
-                            log_info!("Switched to Trending tab");
+                        } else if !app.is_in_filter_mode() {
+                            if app.main_tab != MainTab::Trending
+                                || app.event_filter != EventFilter::Trending
+                            {
+                                app.main_tab = MainTab::Trending;
+                                if let Some((order_by, limit)) =
+                                    switch_filter_tab(&mut app, EventFilter::Trending)
+                                {
+                                    drop(app);
+                                    spawn_filter_fetch(Arc::clone(&app_state), order_by, limit);
+                                }
+                                log_info!("Switched to Trending tab");
+                            }
                         } else if app.is_in_filter_mode() {
                             app.add_search_char('1');
                             if app.search.mode == SearchMode::ApiSearch {
@@ -1268,12 +1287,66 @@ pub async fn run_trending_tui(
                         }
                     },
                     KeyCode::Char('2') => {
-                        // Switch to Yield main tab (unless in search/filter mode)
+                        // Switch to Breaking tab (unless in search/filter mode)
                         if app.main_tab == MainTab::Yield && app.yield_state.is_searching {
                             app.yield_state.add_search_char('2');
                             yield_search_debounce = Some(tokio::time::Instant::now());
                         } else if app.main_tab == MainTab::Yield && app.yield_state.is_filtering {
                             app.yield_state.add_filter_char('2');
+                        } else if !app.is_in_filter_mode() {
+                            if app.main_tab != MainTab::Trending
+                                || app.event_filter != EventFilter::Breaking
+                            {
+                                app.main_tab = MainTab::Trending;
+                                if let Some((order_by, limit)) =
+                                    switch_filter_tab(&mut app, EventFilter::Breaking)
+                                {
+                                    drop(app);
+                                    spawn_filter_fetch(Arc::clone(&app_state), order_by, limit);
+                                }
+                                log_info!("Switched to Breaking tab");
+                            }
+                        } else if app.is_in_filter_mode() {
+                            app.add_search_char('2');
+                            if app.search.mode == SearchMode::ApiSearch {
+                                search_debounce = Some(tokio::time::Instant::now());
+                            }
+                        }
+                    },
+                    KeyCode::Char('3') => {
+                        // Switch to New tab (unless in search/filter mode)
+                        if app.main_tab == MainTab::Yield && app.yield_state.is_searching {
+                            app.yield_state.add_search_char('3');
+                            yield_search_debounce = Some(tokio::time::Instant::now());
+                        } else if app.main_tab == MainTab::Yield && app.yield_state.is_filtering {
+                            app.yield_state.add_filter_char('3');
+                        } else if !app.is_in_filter_mode() {
+                            if app.main_tab != MainTab::Trending
+                                || app.event_filter != EventFilter::New
+                            {
+                                app.main_tab = MainTab::Trending;
+                                if let Some((order_by, limit)) =
+                                    switch_filter_tab(&mut app, EventFilter::New)
+                                {
+                                    drop(app);
+                                    spawn_filter_fetch(Arc::clone(&app_state), order_by, limit);
+                                }
+                                log_info!("Switched to New tab");
+                            }
+                        } else if app.is_in_filter_mode() {
+                            app.add_search_char('3');
+                            if app.search.mode == SearchMode::ApiSearch {
+                                search_debounce = Some(tokio::time::Instant::now());
+                            }
+                        }
+                    },
+                    KeyCode::Char('4') => {
+                        // Switch to Yield tab (unless in search/filter mode)
+                        if app.main_tab == MainTab::Yield && app.yield_state.is_searching {
+                            app.yield_state.add_search_char('4');
+                            yield_search_debounce = Some(tokio::time::Instant::now());
+                        } else if app.main_tab == MainTab::Yield && app.yield_state.is_filtering {
+                            app.yield_state.add_filter_char('4');
                         } else if !app.is_in_filter_mode() && app.main_tab != MainTab::Yield {
                             app.main_tab = MainTab::Yield;
                             // Fetch yield data if not already loaded
@@ -1285,7 +1358,7 @@ pub async fn run_trending_tui(
                             }
                             log_info!("Switched to Yield tab");
                         } else if app.is_in_filter_mode() {
-                            app.add_search_char('2');
+                            app.add_search_char('4');
                             if app.search.mode == SearchMode::ApiSearch {
                                 search_debounce = Some(tokio::time::Instant::now());
                             }
@@ -1526,26 +1599,44 @@ pub async fn run_trending_tui(
                         if !app.is_in_filter_mode()
                             && app.navigation.focused_panel == FocusedPanel::Header
                         {
+                            // Cycle through all tabs: Yield -> New -> Breaking -> Trending -> Yield
                             match app.main_tab {
                                 MainTab::Trending => {
-                                    let new_filter = app.event_filter.prev();
+                                    match app.event_filter {
+                                        EventFilter::Trending => {
+                                            // Wrap to Yield tab
+                                            app.main_tab = MainTab::Yield;
+                                            if app.yield_state.opportunities.is_empty()
+                                                && !app.yield_state.is_loading
+                                            {
+                                                drop(app);
+                                                spawn_yield_fetch(Arc::clone(&app_state));
+                                            }
+                                        },
+                                        _ => {
+                                            let new_filter = app.event_filter.prev();
+                                            if let Some((order_by, limit)) =
+                                                switch_filter_tab(&mut app, new_filter)
+                                            {
+                                                drop(app);
+                                                spawn_filter_fetch(
+                                                    Arc::clone(&app_state),
+                                                    order_by,
+                                                    limit,
+                                                );
+                                            }
+                                        },
+                                    }
+                                },
+                                MainTab::Yield => {
+                                    // Go to New tab
+                                    app.main_tab = MainTab::Trending;
                                     if let Some((order_by, limit)) =
-                                        switch_filter_tab(&mut app, new_filter)
+                                        switch_filter_tab(&mut app, EventFilter::New)
                                     {
                                         drop(app);
                                         spawn_filter_fetch(Arc::clone(&app_state), order_by, limit);
                                     }
-                                },
-                                MainTab::Yield => {
-                                    // Cycle sort backwards
-                                    app.yield_state.sort_by = match app.yield_state.sort_by {
-                                        state::YieldSortBy::Return => state::YieldSortBy::EndDate,
-                                        state::YieldSortBy::Volume => state::YieldSortBy::Return,
-                                        state::YieldSortBy::EndDate => state::YieldSortBy::Volume,
-                                    };
-                                    app.yield_state.sort_opportunities();
-                                    app.yield_state.selected_index = 0;
-                                    app.yield_state.scroll = 0;
                                 },
                             }
                         }
@@ -1554,22 +1645,44 @@ pub async fn run_trending_tui(
                         if !app.is_in_filter_mode()
                             && app.navigation.focused_panel == FocusedPanel::Header
                         {
+                            // Cycle through all tabs: Trending -> Breaking -> New -> Yield -> Trending
                             match app.main_tab {
                                 MainTab::Trending => {
-                                    let new_filter = app.event_filter.next();
+                                    match app.event_filter {
+                                        EventFilter::New => {
+                                            // Go to Yield tab
+                                            app.main_tab = MainTab::Yield;
+                                            if app.yield_state.opportunities.is_empty()
+                                                && !app.yield_state.is_loading
+                                            {
+                                                drop(app);
+                                                spawn_yield_fetch(Arc::clone(&app_state));
+                                            }
+                                        },
+                                        _ => {
+                                            let new_filter = app.event_filter.next();
+                                            if let Some((order_by, limit)) =
+                                                switch_filter_tab(&mut app, new_filter)
+                                            {
+                                                drop(app);
+                                                spawn_filter_fetch(
+                                                    Arc::clone(&app_state),
+                                                    order_by,
+                                                    limit,
+                                                );
+                                            }
+                                        },
+                                    }
+                                },
+                                MainTab::Yield => {
+                                    // Wrap to Trending tab
+                                    app.main_tab = MainTab::Trending;
                                     if let Some((order_by, limit)) =
-                                        switch_filter_tab(&mut app, new_filter)
+                                        switch_filter_tab(&mut app, EventFilter::Trending)
                                     {
                                         drop(app);
                                         spawn_filter_fetch(Arc::clone(&app_state), order_by, limit);
                                     }
-                                },
-                                MainTab::Yield => {
-                                    // Cycle sort forward
-                                    app.yield_state.sort_by = app.yield_state.sort_by.next();
-                                    app.yield_state.sort_opportunities();
-                                    app.yield_state.selected_index = 0;
-                                    app.yield_state.scroll = 0;
                                 },
                             }
                         }

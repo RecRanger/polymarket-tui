@@ -1,79 +1,54 @@
 //! Render functions for the trending TUI
 
 use {
-    super::state::{
-        EventFilter, FocusedPanel, MainTab, PopupType, SearchMode, TrendingAppState, YieldSortBy,
-    },
+    super::state::{EventFilter, FocusedPanel, MainTab, PopupType, SearchMode, TrendingAppState},
     chrono::{DateTime, Utc},
     polymarket_api::gamma::Event,
     ratatui::{
         Frame,
-        layout::{Alignment, Constraint, Direction, Layout, Rect, Spacing},
+        layout::{Alignment, Constraint, Direction, Layout, Rect},
         prelude::Stylize,
-        style::{Color, Modifier, Style, palette::tailwind},
+        style::{Color, Modifier, Style},
         text::{Line, Span},
         widgets::{
-            Block, Borders, Cell, Clear, LineGauge, List, ListItem, ListState, Paragraph, Row,
-            Scrollbar, ScrollbarOrientation, ScrollbarState, Table, Tabs, Wrap,
+            Block, BorderType, Borders, Cell, Clear, LineGauge, List, ListItem, ListState,
+            Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, Tabs, Wrap,
         },
     },
     unicode_width::UnicodeWidthStr,
 };
 
-/// Check if a click is on a main tab (Trending vs Yield)
-/// Main tabs are rendered on the first line (y = 0)
-pub fn get_clicked_main_tab(x: u16, y: u16, _size: Rect) -> Option<MainTab> {
-    // Main tabs are on the first line (y = 0)
+/// Unified tab enum for click detection (combines MainTab and EventFilter)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClickedTab {
+    Trending,
+    Breaking,
+    New,
+    Yield,
+}
+
+/// Check if a click is on a tab (unified single line of tabs)
+/// Tabs are rendered on the first line (y = 0)
+/// Returns which tab was clicked: Trending [1], Breaking [2], New [3], Yield [4]
+pub fn get_clicked_tab(x: u16, y: u16, _size: Rect) -> Option<ClickedTab> {
+    // Tabs are on the first line (y = 0)
     if y != 0 {
         return None;
     }
 
-    // Tab labels with padding: "  Trending  " (12) + " " (1) + "  Yield  " (9)
-    // Positions: 0-11 = Trending, 12 = divider, 13-21 = Yield
-    if x < 12 {
-        return Some(MainTab::Trending);
-    } else if (13..22).contains(&x) {
-        return Some(MainTab::Yield);
-    }
-    None
-}
-
-/// Check if a click is on a sub-filter tab (Trending, Breaking, New) within the Trending main tab
-/// These tabs are rendered on the second line (y = 1)
-pub fn get_clicked_tab(x: u16, y: u16, _size: Rect) -> Option<EventFilter> {
-    // Sub-tabs are on the second line (y = 1)
-    if y != 1 {
-        return None;
-    }
-
-    // Tab labels: "  Trending  " (12) + " " + "  Breaking  " (12) + " " + "  New  " (7)
-    // Positions: 0-11 = Trending, 13-24 = Breaking, 26-32 = New
-    if x < 12 {
-        return Some(EventFilter::Trending);
-    } else if (13..25).contains(&x) {
-        return Some(EventFilter::Breaking);
-    } else if x >= 26 {
-        return Some(EventFilter::New);
-    }
-    None
-}
-
-/// Check if a click is on a yield sort tab (Return, Volume, End Date)
-/// These tabs are rendered on the second line (y = 1) when in Yield main tab
-pub fn get_clicked_yield_sort(x: u16, y: u16, _size: Rect) -> Option<YieldSortBy> {
-    // Sort tabs are on the second line (y = 1)
-    if y != 1 {
-        return None;
-    }
-
-    // Tab labels: "  By Return  " (13) + " " + "  By Volume  " (13) + " " + "  By End Date  " (15)
-    // Positions: 0-12 = Return, 14-26 = Volume, 28-42 = EndDate
-    if x < 13 {
-        return Some(YieldSortBy::Return);
-    } else if (14..27).contains(&x) {
-        return Some(YieldSortBy::Volume);
-    } else if x >= 28 {
-        return Some(YieldSortBy::EndDate);
+    // Actual rendered output (Tabs widget adds leading space and "   " divider):
+    // " Trending [1]   Breaking [2]   New [3]   Yield [4]"
+    // 01234567890123456789012345678901234567890123456789
+    //  Trending [1]   Breaking [2]   New [3]   Yield [4]
+    // Positions: 1-12 = Trending, 16-27 = Breaking, 31-36 = New, 40-48 = Yield
+    if x <= 12 {
+        return Some(ClickedTab::Trending);
+    } else if (16..28).contains(&x) {
+        return Some(ClickedTab::Breaking);
+    } else if (31..37).contains(&x) {
+        return Some(ClickedTab::New);
+    } else if x >= 40 {
+        return Some(ClickedTab::Yield);
     }
     None
 }
@@ -92,13 +67,13 @@ fn format_price_cents(price: f64) -> String {
 }
 
 pub fn render(f: &mut Frame, app: &mut TrendingAppState) {
-    // Header height: 4 lines for normal mode (main tabs, sub-tabs, info), 7 for search mode
+    // Header height: 2 lines for normal mode (tabs + separator), 5 for search mode
     let header_height = if app.is_in_filter_mode() {
-        7
-    } else {
         5
+    } else {
+        2
     };
-    // Use Spacing::Overlap(1) to collapse borders between vertical sections
+    // No overlap - all panels have full borders with rounded corners
     // Conditionally include logs area based on show_logs
     let constraints: Vec<Constraint> = if app.show_logs {
         vec![
@@ -116,7 +91,6 @@ pub fn render(f: &mut Frame, app: &mut TrendingAppState) {
     };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .spacing(Spacing::Overlap(1))
         .constraints(constraints)
         .split(f.area());
 
@@ -129,7 +103,6 @@ pub fn render(f: &mut Frame, app: &mut TrendingAppState) {
             // Main content - split into events list and trades view
             let main_chunks = Layout::default()
                 .direction(Direction::Horizontal)
-                .spacing(Spacing::Overlap(1))
                 .constraints([
                     Constraint::Percentage(40), // Events list
                     Constraint::Fill(1),        // Right side takes remaining space
@@ -172,7 +145,11 @@ pub fn render(f: &mut Frame, app: &mut TrendingAppState) {
         format!("{} | l: Logs | q: Quit | [{}]", panel_help, panel_name)
     };
     let footer = Paragraph::new(footer_text)
-        .block(Block::default().borders(Borders::ALL))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded),
+        )
         .alignment(Alignment::Center)
         .style(Style::default().fg(Color::Gray));
     f.render_widget(footer, chunks[footer_idx]);
@@ -193,48 +170,50 @@ pub fn render(f: &mut Frame, app: &mut TrendingAppState) {
 }
 
 fn render_header(f: &mut Frame, app: &TrendingAppState, area: Rect) {
-    let is_header_focused = app.navigation.focused_panel == FocusedPanel::Header;
-
-    // Main tab index
-    let main_tab_index = match app.main_tab {
-        MainTab::Trending => 0,
-        MainTab::Yield => 1,
+    // Calculate unified tab index: 0=Trending, 1=Breaking, 2=New, 3=Yield
+    let tab_index = match app.main_tab {
+        MainTab::Trending => match app.event_filter {
+            EventFilter::Trending => 0,
+            EventFilter::Breaking => 1,
+            EventFilter::New => 2,
+        },
+        MainTab::Yield => 3,
     };
 
     if app.is_in_filter_mode() {
-        // Split header into main tabs, sub-tabs, info, and search input
+        // Split header into tabs, separator, and search input
         let header_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1), // Main tabs line
-                Constraint::Length(1), // Sub-tabs line
-                Constraint::Length(2), // Info line
+                Constraint::Length(1), // Tabs line
+                Constraint::Length(1), // Horizontal separator
                 Constraint::Length(3), // Search input
             ])
             .split(area);
 
-        // Render main tabs
-        let main_tab_titles = vec!["Trending", "Yield"];
-        let main_tabs = Tabs::new(main_tab_titles)
-            .select(main_tab_index)
+        // Render unified tabs
+        let tab_titles: Vec<Line> = vec![
+            Line::from("Trending [1]"),
+            Line::from("Breaking [2]"),
+            Line::from("New [3]"),
+            Line::from("Yield [4]"),
+        ];
+        let tabs = Tabs::new(tab_titles)
+            .select(tab_index)
             .style(Style::default().fg(Color::DarkGray))
             .highlight_style(
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(Color::White)
                     .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
             )
             .divider(" ");
-        f.render_widget(main_tabs, header_chunks[0]);
+        f.render_widget(tabs, header_chunks[0]);
 
-        // Render sub-tabs based on main tab
-        render_sub_tabs(f, app, header_chunks[1], is_header_focused);
-
-        // Info line
-        let info_text = get_info_text(app);
-        let info = Paragraph::new(format!("{} | Esc to exit", info_text))
-            .style(Style::default().fg(Color::Gray))
-            .alignment(Alignment::Left);
-        f.render_widget(info, header_chunks[2]);
+        // Horizontal separator line (gitui-style) - full width line of ─ characters
+        let line_width = header_chunks[1].width as usize;
+        let separator_line = "─".repeat(line_width);
+        let separator = Paragraph::new(separator_line).style(Style::default().fg(Color::DarkGray));
+        f.render_widget(separator, header_chunks[1]);
 
         // Search input field
         let search_line = if app.search.query.is_empty() {
@@ -268,151 +247,48 @@ fn render_header(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             "Search"
         };
         let search_input = Paragraph::new(vec![search_line])
-            .block(Block::default().borders(Borders::ALL).title(search_title))
-            .alignment(Alignment::Left)
-            .wrap(Wrap { trim: true });
-        f.render_widget(search_input, header_chunks[3]);
-    } else {
-        // Normal mode: Split header into main tabs, sub-tabs, and info
-        let header_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1), // Main tabs line
-                Constraint::Length(1), // Sub-tabs line
-                Constraint::Length(3), // Info with border
-            ])
-            .split(area);
-
-        // Render main tabs with colored backgrounds
-        let main_tab_titles: Vec<Line> = vec![
-            Line::from("  Trending  ")
-                .fg(tailwind::SLATE.c200)
-                .bg(tailwind::BLUE.c900),
-            Line::from("  Yield  ")
-                .fg(tailwind::SLATE.c200)
-                .bg(tailwind::EMERALD.c900),
-        ];
-        let highlight_style = match app.main_tab {
-            MainTab::Trending => (Color::default(), tailwind::BLUE.c700),
-            MainTab::Yield => (Color::default(), tailwind::EMERALD.c700),
-        };
-        let main_tabs = Tabs::new(main_tab_titles)
-            .select(main_tab_index)
-            .highlight_style(highlight_style)
-            .padding("", "")
-            .divider(" ");
-        f.render_widget(main_tabs, header_chunks[0]);
-
-        // Render sub-tabs based on main tab
-        render_sub_tabs(f, app, header_chunks[1], is_header_focused);
-
-        // Info block
-        let info_text = get_info_text(app);
-        let info = Paragraph::new(info_text)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(if is_header_focused {
-                        Style::default().fg(Color::Yellow)
-                    } else {
-                        Style::default()
-                    }),
+                    .border_type(BorderType::Rounded)
+                    .title(search_title),
             )
-            .style(Style::default().fg(Color::Gray))
-            .alignment(Alignment::Left);
-        f.render_widget(info, header_chunks[2]);
-    }
-}
+            .alignment(Alignment::Left)
+            .wrap(Wrap { trim: true });
+        f.render_widget(search_input, header_chunks[2]);
+    } else {
+        // Normal mode: Split header into tabs and horizontal line
+        let header_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1), // Tabs line
+                Constraint::Length(1), // Horizontal separator line
+            ])
+            .split(area);
 
-fn render_sub_tabs(f: &mut Frame, app: &TrendingAppState, area: Rect, _is_focused: bool) {
-    match app.main_tab {
-        MainTab::Trending => {
-            let selected_tab_index = match app.event_filter {
-                EventFilter::Trending => 0,
-                EventFilter::Breaking => 1,
-                EventFilter::New => 2,
-            };
-            // Sub-tabs with colored backgrounds
-            let tab_titles: Vec<Line> = vec![
-                Line::from("  Trending  ")
-                    .fg(tailwind::SLATE.c200)
-                    .bg(tailwind::CYAN.c900),
-                Line::from("  Breaking  ")
-                    .fg(tailwind::SLATE.c200)
-                    .bg(tailwind::ORANGE.c900),
-                Line::from("  New  ")
-                    .fg(tailwind::SLATE.c200)
-                    .bg(tailwind::VIOLET.c900),
-            ];
-            let highlight_style = match app.event_filter {
-                EventFilter::Trending => (Color::default(), tailwind::CYAN.c700),
-                EventFilter::Breaking => (Color::default(), tailwind::ORANGE.c700),
-                EventFilter::New => (Color::default(), tailwind::VIOLET.c700),
-            };
-            let tabs = Tabs::new(tab_titles)
-                .select(selected_tab_index)
-                .highlight_style(highlight_style)
-                .padding("", "")
-                .divider(" ");
-            f.render_widget(tabs, area);
-        },
-        MainTab::Yield => {
-            let selected_sort_index = match app.yield_state.sort_by {
-                YieldSortBy::Return => 0,
-                YieldSortBy::Volume => 1,
-                YieldSortBy::EndDate => 2,
-            };
-            // Sort tabs with colored backgrounds
-            let sort_titles: Vec<Line> = vec![
-                Line::from("  By Return  ")
-                    .fg(tailwind::SLATE.c200)
-                    .bg(tailwind::GREEN.c900),
-                Line::from("  By Volume  ")
-                    .fg(tailwind::SLATE.c200)
-                    .bg(tailwind::AMBER.c900),
-                Line::from("  By End Date  ")
-                    .fg(tailwind::SLATE.c200)
-                    .bg(tailwind::ROSE.c900),
-            ];
-            let highlight_style = match app.yield_state.sort_by {
-                YieldSortBy::Return => (Color::default(), tailwind::GREEN.c700),
-                YieldSortBy::Volume => (Color::default(), tailwind::AMBER.c700),
-                YieldSortBy::EndDate => (Color::default(), tailwind::ROSE.c700),
-            };
-            let tabs = Tabs::new(sort_titles)
-                .select(selected_sort_index)
-                .highlight_style(highlight_style)
-                .padding("", "")
-                .divider(" ");
-            f.render_widget(tabs, area);
-        },
-    }
-}
+        // Render unified tabs in gitui-style (underline for selected, keyboard shortcuts)
+        let tab_titles: Vec<Line> = vec![
+            Line::from("Trending [1]"),
+            Line::from("Breaking [2]"),
+            Line::from("New [3]"),
+            Line::from("Yield [4]"),
+        ];
+        let tabs = Tabs::new(tab_titles)
+            .select(tab_index)
+            .style(Style::default().fg(Color::DarkGray))
+            .highlight_style(
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            )
+            .divider(" ");
+        f.render_widget(tabs, header_chunks[0]);
 
-fn get_info_text(app: &TrendingAppState) -> String {
-    match app.main_tab {
-        MainTab::Trending => {
-            let watched_count = app
-                .trades
-                .event_trades
-                .values()
-                .filter(|et| et.is_watching)
-                .count();
-            let filtered_count = app.filtered_events().len();
-            format!("🔥 {} events | Watching: {}", filtered_count, watched_count)
-        },
-        MainTab::Yield => {
-            let count = app.yield_state.opportunities.len();
-            let min_prob = app.yield_state.min_prob * 100.0;
-            if app.yield_state.is_loading {
-                format!("💰 Loading yield opportunities (≥{:.0}%)...", min_prob)
-            } else {
-                format!(
-                    "💰 {} yield opportunities (≥{:.0}% probability)",
-                    count, min_prob
-                )
-            }
-        },
+        // Horizontal separator line (gitui-style) - full width line of ─ characters
+        let line_width = header_chunks[1].width as usize;
+        let separator_line = "─".repeat(line_width);
+        let separator = Paragraph::new(separator_line).style(Style::default().fg(Color::DarkGray));
+        f.render_widget(separator, header_chunks[1]);
     }
 }
 
@@ -460,6 +336,7 @@ fn render_yield_tab(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
                     .title(search_title)
                     .border_style(Style::default().fg(Color::Yellow)),
             )
@@ -469,7 +346,6 @@ fn render_yield_tab(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         // Render main content below search
         let main_chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .spacing(Spacing::Overlap(1))
             .constraints([
                 Constraint::Percentage(55), // Results list
                 Constraint::Fill(1),        // Details panel
@@ -509,6 +385,7 @@ fn render_yield_tab(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
                     .title("Filter (Esc to close, Backspace to clear)")
                     .border_style(Style::default().fg(Color::Yellow)),
             )
@@ -518,7 +395,6 @@ fn render_yield_tab(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         // Render main content below filter
         let main_chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .spacing(Spacing::Overlap(1))
             .constraints([
                 Constraint::Percentage(55), // Opportunities list
                 Constraint::Fill(1),        // Details panel
@@ -531,7 +407,6 @@ fn render_yield_tab(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         // Normal mode: Split into list on left and details on right
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .spacing(Spacing::Overlap(1))
             .constraints([
                 Constraint::Percentage(55), // Opportunities list
                 Constraint::Fill(1),        // Details panel
@@ -551,6 +426,7 @@ fn render_yield_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
                     .title("Yield Opportunities"),
             )
             .alignment(Alignment::Center)
@@ -564,6 +440,7 @@ fn render_yield_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
                     .title("Yield Opportunities"),
             )
             .alignment(Alignment::Center)
@@ -583,6 +460,7 @@ fn render_yield_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .title("Yield Opportunities (filtered)"),
         )
         .alignment(Alignment::Center)
@@ -711,6 +589,8 @@ fn render_yield_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
     .block(
         Block::default()
             .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_type(BorderType::Rounded)
             .title(title)
             .border_style(block_style),
     )
@@ -750,7 +630,6 @@ fn render_yield_details(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         // Split into event info and market details
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .spacing(Spacing::Overlap(1))
             .constraints([
                 Constraint::Length(10), // Event info
                 Constraint::Min(0),     // Market details
@@ -805,6 +684,8 @@ fn render_yield_details(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_type(BorderType::Rounded)
                     .title("Event")
                     .border_style(event_block_style),
             )
@@ -894,6 +775,7 @@ fn render_yield_details(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
                     .title("Market Details")
                     .border_style(market_block_style),
             )
@@ -901,7 +783,12 @@ fn render_yield_details(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         f.render_widget(market_details, chunks[1]);
     } else {
         let empty = Paragraph::new("No opportunity selected")
-            .block(Block::default().borders(Borders::ALL).title("Details"))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .title("Details"),
+            )
             .alignment(Alignment::Center)
             .style(Style::default().fg(Color::Gray));
         f.render_widget(empty, area);
@@ -917,6 +804,7 @@ fn render_yield_search_results(f: &mut Frame, app: &TrendingAppState, area: Rect
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
                     .title("Search Results"),
             )
             .alignment(Alignment::Center)
@@ -935,6 +823,7 @@ fn render_yield_search_results(f: &mut Frame, app: &TrendingAppState, area: Rect
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
                     .title("Search Results"),
             )
             .alignment(Alignment::Center)
@@ -1058,6 +947,7 @@ fn render_yield_search_results(f: &mut Frame, app: &TrendingAppState, area: Rect
     .block(
         Block::default()
             .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
             .title(title)
             .border_style(block_style),
     )
@@ -1096,7 +986,6 @@ fn render_yield_search_details(f: &mut Frame, app: &TrendingAppState, area: Rect
         // Split into event info and yield details
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .spacing(Spacing::Overlap(1))
             .constraints([
                 Constraint::Length(10), // Event info
                 Constraint::Min(0),     // Yield details
@@ -1168,6 +1057,7 @@ fn render_yield_search_details(f: &mut Frame, app: &TrendingAppState, area: Rect
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
                     .title("Event")
                     .border_style(event_block_style),
             )
@@ -1246,6 +1136,7 @@ fn render_yield_search_details(f: &mut Frame, app: &TrendingAppState, area: Rect
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
                         .title("Best Yield Opportunity")
                         .border_style(yield_block_style),
                 )
@@ -1272,6 +1163,7 @@ fn render_yield_search_details(f: &mut Frame, app: &TrendingAppState, area: Rect
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
                         .title("No Yield Opportunity")
                         .border_style(yield_block_style),
                 )
@@ -1280,7 +1172,12 @@ fn render_yield_search_details(f: &mut Frame, app: &TrendingAppState, area: Rect
         }
     } else {
         let empty = Paragraph::new("Select an event to see details")
-            .block(Block::default().borders(Borders::ALL).title("Details"))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .title("Details"),
+            )
             .alignment(Alignment::Center)
             .style(Style::default().fg(Color::Gray));
         f.render_widget(empty, area);
@@ -1372,6 +1269,7 @@ fn render_popup(f: &mut Frame, popup: &PopupType) {
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::Cyan))
         .style(Style::default().bg(Color::Black));
 
@@ -1553,17 +1451,20 @@ fn render_events_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         Style::default()
     };
 
-    // Build title
+    // Build title with count
+    let event_count = app.filtered_events().len();
     let title = if app.pagination.is_fetching_more {
-        "Trending Events (loading...)"
+        format!("Events ({}) loading...", event_count)
     } else {
-        "Trending Events"
+        format!("Events ({})", event_count)
     };
 
     let list = List::new(items)
         .block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_type(BorderType::Rounded)
                 .title(title)
                 .border_style(block_style),
         )
@@ -1617,7 +1518,7 @@ fn render_trades(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         // Use Spacing::Overlap(1) to collapse borders between panels
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .spacing(Spacing::Overlap(1))
+
             .constraints([
                 Constraint::Length(min_event_details_height as u16), // Event details (minimum height, scrollable)
                 Constraint::Length(7), // Markets panel (5 lines + 2 for borders)
@@ -1648,6 +1549,8 @@ fn render_trades(f: &mut Frame, app: &TrendingAppState, area: Rect) {
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
+                        .border_type(BorderType::Rounded)
                         .title(if is_focused {
                             format!("Trades ({}) (Focused)", trades.len())
                         } else {
@@ -1769,6 +1672,8 @@ fn render_trades(f: &mut Frame, app: &TrendingAppState, area: Rect) {
                 };
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_type(BorderType::Rounded)
                     .title(if is_focused {
                         format!("Trades ({}) (Focused)", trades.len())
                     } else {
@@ -1818,6 +1723,8 @@ fn render_trades(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_type(BorderType::Rounded)
                     .title("Event Details & Trades"),
             )
             .alignment(Alignment::Center)
@@ -2067,6 +1974,7 @@ fn render_event_details(
         .block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .title(title)
                 .border_style(block_style),
         )
@@ -2092,7 +2000,12 @@ fn render_event_details(
 fn render_markets(f: &mut Frame, app: &TrendingAppState, event: &Event, area: Rect) {
     if event.markets.is_empty() {
         let paragraph = Paragraph::new("No markets available")
-            .block(Block::default().borders(Borders::ALL).title("Markets"))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .title("Markets"),
+            )
             .alignment(Alignment::Center)
             .style(Style::default().fg(Color::Gray));
         f.render_widget(paragraph, area);
@@ -2295,6 +2208,7 @@ fn render_markets(f: &mut Frame, app: &TrendingAppState, event: &Event, area: Re
     let list = List::new(items).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
             .title(if is_focused {
                 format!("Markets ({}) (Focused)", event.markets.len())
             } else {
@@ -2444,6 +2358,7 @@ fn render_logs(f: &mut Frame, app: &mut TrendingAppState, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .title(if is_focused {
                     "Logs (Focused)"
                 } else {
