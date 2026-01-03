@@ -253,9 +253,9 @@ async fn test_get_status() {
     let client = GammaClient::new();
     let result = client.get_status().await;
 
-    // Status endpoint might return different formats, so we just verify it doesn't panic
+    // Status endpoint returns a plain string like "OK"
     if let Ok(status) = result {
-        assert!(!status.status.is_empty());
+        assert!(!status.is_empty());
     }
 }
 

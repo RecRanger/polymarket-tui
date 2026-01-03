@@ -587,11 +587,15 @@ fn render_header(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             right_spans.push(Span::styled("[ Login ]", Style::default().fg(Color::Cyan)));
         }
 
-        // API status indicator dot
-        let status_dot = match app.api_status {
-            Some(true) => Span::styled(" ●", Style::default().fg(Color::Green)),
-            Some(false) => Span::styled(" ●", Style::default().fg(Color::Red)),
-            None => Span::styled(" ○", Style::default().fg(Color::DarkGray)),
+        // API status indicator dot (using smaller bullet •)
+        // Green = both APIs healthy, Yellow = one API down, Red = both down, Gray = unknown
+        let status_dot = match (app.gamma_api_status, app.data_api_status) {
+            (Some(true), Some(true)) => Span::styled(" •", Style::default().fg(Color::Green)),
+            (Some(false), Some(false)) => Span::styled(" •", Style::default().fg(Color::Red)),
+            (Some(true), Some(false)) | (Some(false), Some(true)) => {
+                Span::styled(" •", Style::default().fg(Color::Yellow))
+            },
+            _ => Span::styled(" •", Style::default().fg(Color::DarkGray)),
         };
         right_spans.push(status_dot);
 

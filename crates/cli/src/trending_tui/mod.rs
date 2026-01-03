@@ -319,18 +319,42 @@ async fn fetch_events_for_filter(
 
 /// Spawn async task to fetch API status and update app state
 fn spawn_fetch_api_status(app_state: Arc<TokioMutex<TrendingAppState>>) {
-    let gamma_client = GammaClient::new();
+    use polymarket_api::DataClient;
 
+    let gamma_client = GammaClient::new();
+    let data_client = DataClient::new();
+
+    // Check Gamma API
+    let app_state_gamma = Arc::clone(&app_state);
     tokio::spawn(async move {
         match gamma_client.get_status().await {
             Ok(status) => {
-                let is_healthy = status.status == "ok" || status.status == "healthy";
-                let mut app = app_state.lock().await;
-                app.api_status = Some(is_healthy);
+                let is_healthy = status == "OK" || status == "ok";
+                log_info!("Gamma API status: {} (healthy={})", status, is_healthy);
+                let mut app = app_state_gamma.lock().await;
+                app.gamma_api_status = Some(is_healthy);
             },
-            Err(_) => {
+            Err(e) => {
+                log_error!("Gamma API status check failed: {}", e);
+                let mut app = app_state_gamma.lock().await;
+                app.gamma_api_status = Some(false);
+            },
+        }
+    });
+
+    // Check Data API
+    tokio::spawn(async move {
+        match data_client.get_status().await {
+            Ok(status) => {
+                let is_healthy = status.data == "OK" || status.data == "ok";
+                log_info!("Data API status: {} (healthy={})", status.data, is_healthy);
                 let mut app = app_state.lock().await;
-                app.api_status = Some(false);
+                app.data_api_status = Some(is_healthy);
+            },
+            Err(e) => {
+                log_error!("Data API status check failed: {}", e);
+                let mut app = app_state.lock().await;
+                app.data_api_status = Some(false);
             },
         }
     });

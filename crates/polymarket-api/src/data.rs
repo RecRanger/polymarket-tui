@@ -223,12 +223,25 @@ pub struct DataClient {
     client: reqwest::Client,
 }
 
+/// Data API status response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataStatusResponse {
+    pub data: String,
+}
+
 impl DataClient {
     /// Create a new Data API client
     pub fn new() -> Self {
         Self {
             client: reqwest::Client::new(),
         }
+    }
+
+    /// Check Data API health status
+    pub async fn get_status(&self) -> Result<DataStatusResponse> {
+        let url = DATA_API_BASE;
+        let status: DataStatusResponse = self.client.get(url).send().await?.json().await?;
+        Ok(status)
     }
 
     /// Get trades for a specific event

@@ -732,9 +732,9 @@ impl GammaClient {
     }
 
     /// Check API health status
-    pub async fn get_status(&self) -> Result<StatusResponse> {
+    pub async fn get_status(&self) -> Result<String> {
         let url = format!("{}/status", GAMMA_API_BASE);
-        let status: StatusResponse = self.client.get(&url).send().await?.json().await?;
+        let status: String = self.client.get(&url).send().await?.json().await?;
         Ok(status)
     }
 
