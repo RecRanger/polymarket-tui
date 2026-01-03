@@ -21,6 +21,7 @@ use super::{
     calculate_orderbook_height, render_event_details, render_markets, render_orderbook,
     render_trades_panel,
 };
+// Note: render_trades_panel is now imported from the trades module via mod.rs
 
 /// Render the favorites tab
 pub fn render_favorites_tab(f: &mut Frame, app: &TrendingAppState, area: Rect) {
