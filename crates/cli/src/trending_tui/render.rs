@@ -2130,7 +2130,7 @@ fn render_yield_search_details(f: &mut Frame, app: &TrendingAppState, area: Rect
     }
 }
 
-/// Helper function to center a rectangle
+/// Helper function to center a rectangle by percentage
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)
@@ -2147,6 +2147,31 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
             Constraint::Percentage(percent_x),
             Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
+}
+
+/// Helper function to center a rectangle with fixed width and percentage height
+fn centered_rect_fixed_width(width: u16, percent_y: u16, r: Rect) -> Rect {
+    // Clamp width to available space
+    let actual_width = width.min(r.width);
+    let horizontal_margin = (r.width.saturating_sub(actual_width)) / 2;
+
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(horizontal_margin),
+            Constraint::Length(actual_width),
+            Constraint::Min(0),
         ])
         .split(popup_layout[1])[1]
 }
@@ -2681,7 +2706,8 @@ fn render_login_popup(f: &mut Frame, app: &TrendingAppState) {
 
 /// Render user profile popup
 fn render_user_profile_popup(f: &mut Frame, app: &TrendingAppState) {
-    let area = centered_rect(50, 60, f.area());
+    // Fixed width: 55 (separator) + 2 (borders) + 2 (padding) = 59, round to 60
+    let area = centered_rect_fixed_width(60, 60, f.area());
     f.render_widget(Clear, area);
 
     let auth = &app.auth_state;
