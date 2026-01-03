@@ -224,11 +224,15 @@ fn event_has_yield(event: &polymarket_api::gamma::Event) -> bool {
 }
 
 /// Format a price (0.0-1.0) as cents like the Polymarket website
-/// Examples: 0.01 -> "1¢", 0.11 -> "11¢", 0.89 -> "89¢", 0.004 -> "<1¢", 0.9995 -> "99.95¢"
+/// Examples: 0.01 -> "1¢", 0.11 -> "11¢", 0.89 -> "89¢", 0.003 -> "0.3¢", 0.9995 -> "99.95¢"
 pub fn format_price_cents(price: f64) -> String {
     let cents = price * 100.0;
-    if cents < 1.0 {
-        "<1¢".to_string()
+    if cents < 0.1 {
+        // Very small prices, show with 2 decimal places
+        format!("{:.2}¢", cents)
+    } else if cents < 1.0 {
+        // Sub-cent prices, show with 1 decimal place (e.g., 0.3¢)
+        format!("{:.1}¢", cents)
     } else if cents < 10.0 {
         format!("{:.1}¢", cents)
     } else if (99.0..100.0).contains(&cents) {
