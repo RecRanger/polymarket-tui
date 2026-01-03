@@ -1433,7 +1433,28 @@ fn render_yield_details(f: &mut Frame, app: &TrendingAppState, area: Rect) {
                 ]),
                 Line::from(""),
                 Line::from(vec![Span::styled(
-                    "Buy at this price, get full $1 if outcome occurs",
+                    "Yield Calculation:",
+                    Style::default().fg(Color::Yellow).bold(),
+                )]),
+                Line::from(vec![Span::styled(
+                    format!(
+                        "  Buy at {} -> Get $1.00 if {} wins",
+                        format_price_cents(opp.price),
+                        opp.outcome
+                    ),
+                    Style::default().fg(Color::DarkGray),
+                )]),
+                Line::from(vec![Span::styled(
+                    format!("  Profit per share: {}", format_price_cents(1.0 - opp.price)),
+                    Style::default().fg(Color::Green),
+                )]),
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    "Note: Actual profit depends on available",
+                    Style::default().fg(Color::DarkGray),
+                )]),
+                Line::from(vec![Span::styled(
+                    "liquidity. Large orders cause price slippage.",
                     Style::default().fg(Color::DarkGray),
                 )]),
             ];
@@ -1561,7 +1582,28 @@ fn render_yield_details(f: &mut Frame, app: &TrendingAppState, area: Rect) {
                 ]),
                 Line::from(""),
                 Line::from(vec![Span::styled(
-                    "Buy at this price, get full $1 if outcome occurs",
+                    "Yield Calculation:",
+                    Style::default().fg(Color::Yellow).bold(),
+                )]),
+                Line::from(vec![Span::styled(
+                    format!(
+                        "  Buy at {} -> Get $1.00 if {} wins",
+                        format_price_cents(opp.price),
+                        opp.outcome
+                    ),
+                    Style::default().fg(Color::DarkGray),
+                )]),
+                Line::from(vec![Span::styled(
+                    format!("  Profit per share: {}", format_price_cents(1.0 - opp.price)),
+                    Style::default().fg(Color::Green),
+                )]),
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    "Note: Actual profit depends on available",
+                    Style::default().fg(Color::DarkGray),
+                )]),
+                Line::from(vec![Span::styled(
+                    "liquidity. Large orders cause price slippage.",
                     Style::default().fg(Color::DarkGray),
                 )]),
             ];
@@ -1940,7 +1982,28 @@ fn render_yield_search_details(f: &mut Frame, app: &TrendingAppState, area: Rect
                     ]),
                     Line::from(""),
                     Line::from(vec![Span::styled(
-                        "Buy at this price, get full $1 if outcome occurs",
+                        "Yield Calculation:",
+                        Style::default().fg(Color::Yellow).bold(),
+                    )]),
+                    Line::from(vec![Span::styled(
+                        format!(
+                            "  Buy at {} -> Get $1.00 if {} wins",
+                            format_price_cents(y.price),
+                            y.outcome
+                        ),
+                        Style::default().fg(Color::DarkGray),
+                    )]),
+                    Line::from(vec![Span::styled(
+                        format!("  Profit per share: {}", format_price_cents(1.0 - y.price)),
+                        Style::default().fg(Color::Green),
+                    )]),
+                    Line::from(""),
+                    Line::from(vec![Span::styled(
+                        "Note: Actual profit depends on available",
+                        Style::default().fg(Color::DarkGray),
+                    )]),
+                    Line::from(vec![Span::styled(
+                        "liquidity. Large orders cause price slippage.",
                         Style::default().fg(Color::DarkGray),
                     )]),
                 ];
