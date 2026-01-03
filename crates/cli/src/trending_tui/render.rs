@@ -808,7 +808,7 @@ fn render_favorites_tab(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         return;
     }
 
-    // Use the same layout as Trending tab - events list + trades view
+    // Use the same layout as Trending tab - events list + right side with details
     let main_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -818,7 +818,48 @@ fn render_favorites_tab(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         .split(area);
 
     render_favorites_list(f, app, main_chunks[0]);
-    render_trades(f, app, main_chunks[1]);
+
+    // Right side: event details, markets, orderbook, trades (if event selected)
+    if let Some(event) = favorites_state.selected_event() {
+        let event_slug = &event.slug;
+        let trades = app.get_trades(event_slug);
+        let is_watching = app.is_watching(event_slug);
+
+        // Split right side into event details, markets, orderbook, and trades
+        let right_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(8),  // Event details
+                Constraint::Length(7),  // Markets panel
+                Constraint::Length(12), // Order Book panel
+                Constraint::Min(0),     // Trades table
+            ])
+            .split(main_chunks[1]);
+
+        // Render event details
+        render_event_details(f, app, event, is_watching, trades.len(), right_chunks[0]);
+
+        // Render markets panel
+        render_markets(f, app, event, right_chunks[1]);
+
+        // Render order book panel
+        render_orderbook(f, app, event, right_chunks[2]);
+
+        // Render trades
+        render_trades_panel(f, app, trades, is_watching, right_chunks[3]);
+    } else {
+        // No event selected - show empty panel
+        let empty = Paragraph::new("Select a favorite event to view details")
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .title("Event Details"),
+            )
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::DarkGray));
+        f.render_widget(empty, main_chunks[1]);
+    }
 }
 
 /// Render the favorites events list (separate from main events list)
@@ -1295,16 +1336,13 @@ fn render_yield_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         block = block.title_bottom(Line::from(" Searching... ").centered());
     }
 
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Fill(1),   // Market name (takes remaining space)
-            Constraint::Length(7), // Return (e.g., "12.34%")
-            Constraint::Length(7), // Price (e.g., "95.5¢")
-            Constraint::Length(8), // Volume (e.g., "$123.4K")
-            Constraint::Length(7), // Expires (e.g., "expired")
-        ],
-    )
+    let table = Table::new(rows, [
+        Constraint::Fill(1),   // Market name (takes remaining space)
+        Constraint::Length(7), // Return (e.g., "12.34%")
+        Constraint::Length(7), // Price (e.g., "95.5¢")
+        Constraint::Length(8), // Volume (e.g., "$123.4K")
+        Constraint::Length(7), // Expires (e.g., "expired")
+    ])
     .header(
         Row::new(vec!["Market", "Return", "Price", "Volume", "Expires"])
             .style(
@@ -1865,16 +1903,13 @@ fn render_yield_search_results(f: &mut Frame, app: &TrendingAppState, area: Rect
         block = block.title_bottom(Line::from(" Searching... ").centered());
     }
 
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Fill(1),   // Event title
-            Constraint::Length(9), // Yield (e.g., "No yield")
-            Constraint::Length(8), // Volume
-            Constraint::Length(3), // Markets count
-            Constraint::Length(7), // Expires
-        ],
-    )
+    let table = Table::new(rows, [
+        Constraint::Fill(1),   // Event title
+        Constraint::Length(9), // Yield (e.g., "No yield")
+        Constraint::Length(8), // Volume
+        Constraint::Length(3), // Markets count
+        Constraint::Length(7), // Expires
+    ])
     .header(
         Row::new(vec!["Event", "Yield", "Volume", "Mkt", "Expires"])
             .style(
@@ -2482,33 +2517,27 @@ fn render_popup(f: &mut Frame, app: &TrendingAppState, popup: &PopupType) {
             let content = build_help_content(app);
             ("Help", content)
         },
-        PopupType::ConfirmQuit => (
-            "Confirm Quit",
-            vec![
-                Line::from(""),
-                Line::from("Are you sure you want to quit?"),
-                Line::from(""),
-                Line::from(vec![
-                    Span::styled("  y  ", Style::default().fg(Color::Green).bold()),
-                    Span::styled("- Yes, quit", Style::default().fg(Color::White)),
-                ]),
-                Line::from(vec![
-                    Span::styled("  n  ", Style::default().fg(Color::Red).bold()),
-                    Span::styled("- No, cancel", Style::default().fg(Color::White)),
-                ]),
-            ],
-        ),
-        PopupType::EventInfo(slug) => (
-            "Event Info",
-            vec![
-                Line::from(format!("Slug: {}", slug)),
-                Line::from(""),
-                Line::from(vec![Span::styled(
-                    "Press Esc to close",
-                    Style::default().fg(Color::DarkGray),
-                )]),
-            ],
-        ),
+        PopupType::ConfirmQuit => ("Confirm Quit", vec![
+            Line::from(""),
+            Line::from("Are you sure you want to quit?"),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  y  ", Style::default().fg(Color::Green).bold()),
+                Span::styled("- Yes, quit", Style::default().fg(Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled("  n  ", Style::default().fg(Color::Red).bold()),
+                Span::styled("- No, cancel", Style::default().fg(Color::White)),
+            ]),
+        ]),
+        PopupType::EventInfo(slug) => ("Event Info", vec![
+            Line::from(format!("Slug: {}", slug)),
+            Line::from(""),
+            Line::from(vec![Span::styled(
+                "Press Esc to close",
+                Style::default().fg(Color::DarkGray),
+            )]),
+        ]),
         // These are handled above with early return
         PopupType::Login | PopupType::UserProfile | PopupType::Trade => unreachable!(),
     };
@@ -3762,19 +3791,16 @@ fn render_trades(f: &mut Frame, app: &TrendingAppState, area: Rect) {
                 })
                 .collect();
 
-            let table = Table::new(
-                rows,
-                [
-                    Constraint::Length(9),  // Time
-                    Constraint::Length(5),  // Side
-                    Constraint::Length(4),  // Outcome
-                    Constraint::Length(8),  // Price
-                    Constraint::Length(9),  // Shares
-                    Constraint::Length(9),  // Value
-                    Constraint::Fill(1),    // Market (takes remaining space)
-                    Constraint::Length(12), // User
-                ],
-            )
+            let table = Table::new(rows, [
+                Constraint::Length(9),  // Time
+                Constraint::Length(5),  // Side
+                Constraint::Length(4),  // Outcome
+                Constraint::Length(8),  // Price
+                Constraint::Length(9),  // Shares
+                Constraint::Length(9),  // Value
+                Constraint::Fill(1),    // Market (takes remaining space)
+                Constraint::Length(12), // User
+            ])
             .header(
                 Row::new(vec![
                     "Time", "Side", "Out", "Price", "Shares", "Value", "Market", "User",
@@ -3852,6 +3878,155 @@ fn render_trades(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             .alignment(Alignment::Center)
             .style(Style::default().fg(Color::Gray));
         f.render_widget(paragraph, area);
+    }
+}
+
+/// Render the trades panel for a given set of trades and watching status
+fn render_trades_panel(
+    f: &mut Frame,
+    app: &TrendingAppState,
+    trades: &[crate::trending_tui::state::Trade],
+    is_watching: bool,
+    area: Rect,
+) {
+    let is_focused = app.navigation.focused_panel == FocusedPanel::Trades;
+    let block_style = if is_focused {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
+
+    if trades.is_empty() {
+        let status_text = if is_watching {
+            "Watching for trades... (Press Enter to stop)"
+        } else {
+            "Not watching. Press Enter to start watching this event."
+        };
+        let paragraph = Paragraph::new(status_text)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .title(if is_focused {
+                        format!("Trades ({}) (Focused)", trades.len())
+                    } else {
+                        format!("Trades ({})", trades.len())
+                    })
+                    .border_style(block_style),
+            )
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::Gray));
+        f.render_widget(paragraph, area);
+    } else {
+        // Calculate visible rows and apply scroll
+        let visible_height = (area.height as usize).saturating_sub(3);
+        let total_rows = trades.len();
+        let scroll = app
+            .scroll
+            .trades
+            .min(total_rows.saturating_sub(visible_height.max(1)));
+
+        let rows: Vec<Row> = trades
+            .iter()
+            .enumerate()
+            .skip(scroll)
+            .take(visible_height)
+            .map(|(idx, trade)| {
+                let time = DateTime::from_timestamp(trade.timestamp, 0)
+                    .map(|dt| dt.format("%H:%M:%S").to_string())
+                    .unwrap_or_else(|| "now".to_string());
+
+                let side_style = if trade.side == "BUY" {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default().fg(Color::Red)
+                };
+
+                let outcome_style = if trade.outcome == "Yes" {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default().fg(Color::Red)
+                };
+
+                let title_truncated = truncate(&trade.title, 30);
+                let user_display = if !trade.user.is_empty() {
+                    &trade.user
+                } else if !trade.pseudonym.is_empty() {
+                    &trade.pseudonym
+                } else {
+                    "-"
+                };
+                let user_truncated = truncate(user_display, 15);
+
+                let bg_color = if idx % 2 == 0 {
+                    Color::Reset
+                } else {
+                    Color::Rgb(30, 30, 40)
+                };
+
+                Row::new(vec![
+                    Cell::from(time).style(Style::default().fg(Color::Gray)),
+                    Cell::from(trade.side.clone()).style(side_style),
+                    Cell::from(trade.outcome.clone()).style(outcome_style),
+                    Cell::from(format!("${:.4}", trade.price)),
+                    Cell::from(format!("{:.2}", trade.shares)),
+                    Cell::from(format!("${:.2}", trade.total_value)),
+                    Cell::from(title_truncated),
+                    Cell::from(user_truncated),
+                ])
+                .style(Style::default().bg(bg_color))
+            })
+            .collect();
+
+        let table = Table::new(rows, [
+            Constraint::Length(9),
+            Constraint::Length(5),
+            Constraint::Length(4),
+            Constraint::Length(8),
+            Constraint::Length(9),
+            Constraint::Length(9),
+            Constraint::Fill(1),
+            Constraint::Length(12),
+        ])
+        .header(
+            Row::new(vec![
+                "Time", "Side", "Out", "Price", "Shares", "Value", "Market", "User",
+            ])
+            .style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        )
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title(if is_focused {
+                    format!("Trades ({}) (Focused)", trades.len())
+                } else {
+                    format!("Trades ({})", trades.len())
+                })
+                .border_style(block_style),
+        )
+        .column_spacing(1);
+
+        f.render_widget(table, area);
+
+        // Render scrollbar if needed
+        if total_rows > visible_height {
+            let mut scrollbar_state = ScrollbarState::new(total_rows)
+                .position(scroll)
+                .viewport_content_length(visible_height);
+            f.render_stateful_widget(
+                Scrollbar::default()
+                    .orientation(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(Some("↑"))
+                    .end_symbol(Some("↓")),
+                area,
+                &mut scrollbar_state,
+            );
+        }
     }
 }
 
@@ -4182,7 +4357,12 @@ fn render_markets(f: &mut Frame, app: &TrendingAppState, event: &Event, area: Re
                 None
             };
 
-            let status_icon = if market.closed {
+            // Check if this market is selected for orderbook display
+            let is_orderbook_selected = idx == app.orderbook_state.selected_market_index;
+
+            let status_icon = if is_orderbook_selected {
+                "▶ " // Orderbook selection indicator
+            } else if market.closed {
                 "○ "
             } else if has_yield {
                 "$ " // Yield opportunity indicator
@@ -4303,7 +4483,9 @@ fn render_markets(f: &mut Frame, app: &TrendingAppState, event: &Event, area: Re
                 .saturating_sub(right_content_width);
 
             // Start with status icon
-            let icon_color = if market.closed {
+            let icon_color = if is_orderbook_selected {
+                Color::Yellow // Highlight selected market for orderbook
+            } else if market.closed {
                 Color::DarkGray
             } else if has_yield {
                 Color::Green // Yield opportunity in green

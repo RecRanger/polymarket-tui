@@ -1205,7 +1205,9 @@ pub async fn run_trending_tui(
     let mut last_selected_event_slug: Option<String> = None;
     let mut last_click: Option<(tokio::time::Instant, u16, u16)> = None; // (time, column, row)
     let mut last_status_check: tokio::time::Instant = tokio::time::Instant::now();
-    let mut last_main_tab: Option<MainTab> = None; // Track tab changes for orderbook reset
+    // Track tab and filter changes for orderbook reset
+    let mut last_main_tab: Option<MainTab> = None;
+    let mut last_event_filter: Option<state::EventFilter> = None;
 
     // Load saved auth config on startup
     if let Some(auth_config) = crate::auth::AuthConfig::load() {
@@ -1308,24 +1310,46 @@ pub async fn run_trending_tui(
             last_status_check = tokio::time::Instant::now();
         }
 
-        // Check if tab changed and reset orderbook if needed
+        // Check if tab or filter changed and reset orderbook if needed
         {
             let mut app = app_state.lock().await;
             let current_tab = app.main_tab;
-            if last_main_tab != Some(current_tab) {
-                // Tab changed - reset orderbook state
-                if last_main_tab.is_some() {
+            let current_filter = app.event_filter;
+            let tab_changed = last_main_tab != Some(current_tab);
+            let filter_changed = last_event_filter != Some(current_filter);
+
+            if tab_changed || filter_changed {
+                // Tab or filter changed - reset orderbook state and fetch new data
+                if last_main_tab.is_some() || last_event_filter.is_some() {
                     app.orderbook_state.reset();
-                    // If switching to Events tab, fetch orderbook for selected event
-                    if current_tab == MainTab::Trending
-                        && let Some(event) = app.selected_event()
-                    {
-                        let orderbook_token_id = event.markets.first().and_then(|market| {
-                            market
-                                .clob_token_ids
-                                .as_ref()
-                                .and_then(|ids| ids.first().cloned())
-                        });
+
+                    // Fetch orderbook for selected event in Events/Breaking/Favorites tabs
+                    let should_fetch =
+                        matches!(current_tab, MainTab::Trending | MainTab::Favorites);
+
+                    if should_fetch {
+                        let orderbook_token_id = if current_tab == MainTab::Favorites {
+                            // For favorites, get from favorites_state
+                            app.favorites_state.selected_event().and_then(|event| {
+                                event.markets.first().and_then(|market| {
+                                    market
+                                        .clob_token_ids
+                                        .as_ref()
+                                        .and_then(|ids| ids.first().cloned())
+                                })
+                            })
+                        } else {
+                            // For Events/Breaking tabs
+                            app.selected_event().and_then(|event| {
+                                event.markets.first().and_then(|market| {
+                                    market
+                                        .clob_token_ids
+                                        .as_ref()
+                                        .and_then(|ids| ids.first().cloned())
+                                })
+                            })
+                        };
+
                         if let Some(token_id) = orderbook_token_id {
                             drop(app);
                             spawn_fetch_orderbook(Arc::clone(&app_state), token_id);
@@ -1333,13 +1357,16 @@ pub async fn run_trending_tui(
                     }
                 }
                 last_main_tab = Some(current_tab);
+                last_event_filter = Some(current_filter);
             }
         }
 
-        // Periodically refresh orderbook data (every 5 seconds) when in Events tab
+        // Periodically refresh orderbook data (every 5 seconds) when in Events/Favorites tab
         {
             let app = app_state.lock().await;
-            if app.main_tab == MainTab::Trending
+            let in_orderbook_tab =
+                app.main_tab == MainTab::Trending || app.main_tab == MainTab::Favorites;
+            if in_orderbook_tab
                 && !app.has_popup()
                 && app.orderbook_state.needs_refresh()
                 && !app.orderbook_state.is_loading

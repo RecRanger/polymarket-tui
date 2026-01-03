@@ -167,20 +167,17 @@ pub fn render(f: &mut Frame, app: &AppState) {
             })
             .collect();
 
-        let table = Table::new(
-            rows,
-            [
-                Constraint::Length(10),     // Time
-                Constraint::Length(8),      // Side
-                Constraint::Length(5),      // Outcome
-                Constraint::Length(10),     // Price
-                Constraint::Length(10),     // Shares
-                Constraint::Length(10),     // Value
-                Constraint::Percentage(25), // Title
-                Constraint::Length(20),     // User
-                Constraint::Length(20),     // Pseudonym
-            ],
-        )
+        let table = Table::new(rows, [
+            Constraint::Length(10),     // Time
+            Constraint::Length(8),      // Side
+            Constraint::Length(5),      // Outcome
+            Constraint::Length(10),     // Price
+            Constraint::Length(10),     // Shares
+            Constraint::Length(10),     // Value
+            Constraint::Percentage(25), // Title
+            Constraint::Length(20),     // User
+            Constraint::Length(20),     // Pseudonym
+        ])
         .header(
             Row::new(vec![
                 "Time",

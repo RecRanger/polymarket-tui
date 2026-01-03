@@ -32,9 +32,11 @@ Fixes #123
 
 **ALWAYS run these checks before committing code:**
 
-1. **Format check**: `just format-check` or `cargo fmt --check`
+1. **Format check**: `just format-check` or `cargo +nightly fmt --check`
 2. **Lint check**: `just lint` or `cargo clippy --all-targets --all-features -- -D warnings`
 3. **Tests**: `cargo test`
+
+**Note**: This project requires nightly Rust for formatting due to unstable rustfmt options. Always use `cargo +nightly fmt` instead of `cargo fmt`.
 
 All checks must pass before creating a commit. Fix any issues found before proceeding.
 

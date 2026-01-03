@@ -1106,8 +1106,8 @@ pub struct TrendingAppState {
     pub login_form: LoginFormState, // Login form state
     pub trade_form: Option<TradeFormState>, // Trade form state (when trade popup is open)
     pub event_sort_by: EventSortBy, // Current sort option for events list
-    pub gamma_api_status: Option<bool>, // Gamma API health: Some(true) = healthy, Some(false) = unhealthy, None = unknown
-    pub data_api_status: Option<bool>, // Data API health: Some(true) = healthy, Some(false) = unhealthy, None = unknown
+    pub gamma_api_status: Option<bool>, /* Gamma API health: Some(true) = healthy, Some(false) = unhealthy, None = unknown */
+    pub data_api_status: Option<bool>, /* Data API health: Some(true) = healthy, Some(false) = unhealthy, None = unknown */
     pub orderbook_state: OrderbookState, // Orderbook panel state
 }
 
