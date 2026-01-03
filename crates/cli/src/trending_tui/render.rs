@@ -52,21 +52,11 @@ fn format_with_thousands(n: f64, decimals: usize) -> String {
 }
 
 /// Calculate the required height for the orderbook panel based on data
-/// Returns a height that fits up to 6 asks + 6 bids + header + spread + borders
-fn calculate_orderbook_height(app: &TrendingAppState) -> u16 {
-    const MIN_HEIGHT: u16 = 6; // Minimum: borders(2) + header(1) + spread(1) + 1 ask + 1 bid
-    const MAX_PER_SIDE: usize = 6; // Show up to 6 rows per side like the website
-
-    if let Some(orderbook) = &app.orderbook_state.orderbook {
-        let asks_count = orderbook.asks.len().min(MAX_PER_SIDE);
-        let bids_count = orderbook.bids.len().min(MAX_PER_SIDE);
-        // Height = borders(2) + header(1) + asks + spread(1) + bids
-        let height = 2 + 1 + asks_count + 1 + bids_count;
-        (height as u16).max(MIN_HEIGHT)
-    } else {
-        // Default height when no data or loading
-        MIN_HEIGHT
-    }
+/// Returns a consistent height to prevent layout jumps when toggling/loading
+fn calculate_orderbook_height(_app: &TrendingAppState) -> u16 {
+    // Always use max height to keep panel stable during loading/toggling
+    // Max height = borders(2) + header(1) + 6 asks + spread(1) + 6 bids = 16
+    16
 }
 
 /// Render a search/filter input field with proper styling
