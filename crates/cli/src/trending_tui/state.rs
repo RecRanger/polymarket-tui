@@ -812,6 +812,12 @@ impl YieldState {
         self.scroll = 0;
     }
 
+    /// Hide the search input but keep the search results displayed
+    pub fn hide_search_input(&mut self) {
+        self.is_searching = false;
+        // Keep search_query, search_results, and last_searched_query intact
+    }
+
     pub fn add_search_char(&mut self, c: char) {
         self.search_query.push(c);
         self.selected_index = 0;

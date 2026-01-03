@@ -2961,6 +2961,19 @@ pub async fn run_trending_tui(
                         }
                     },
                     KeyCode::Enter => {
+                        // Handle yield search/filter mode first
+                        if app.main_tab == MainTab::Yield && app.yield_state.is_searching {
+                            // Hide search input but keep results
+                            app.yield_state.hide_search_input();
+                            log_info!("Hidden yield search input, keeping results");
+                            continue;
+                        } else if app.main_tab == MainTab::Yield && app.yield_state.is_filtering {
+                            // Exit filter mode but keep filter applied
+                            app.yield_state.exit_filter_mode();
+                            log_info!("Exited yield filter mode");
+                            continue;
+                        }
+
                         // Only handle Enter when EventsList panel is focused
                         if app.navigation.focused_panel == FocusedPanel::EventsList {
                             if app.is_in_filter_mode() {
