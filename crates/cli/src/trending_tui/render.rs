@@ -775,8 +775,152 @@ fn render_favorites_tab(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         ])
         .split(area);
 
-    render_events_list(f, app, main_chunks[0]);
+    render_favorites_list(f, app, main_chunks[0]);
     render_trades(f, app, main_chunks[1]);
+}
+
+/// Render the favorites events list (separate from main events list)
+fn render_favorites_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
+    let favorites_state = &app.favorites_state;
+    let events = &favorites_state.events;
+
+    let scroll = favorites_state.scroll;
+    let selected_index = favorites_state.selected_index;
+    let visible_events: Vec<_> = events
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(area.height as usize - 2)
+        .collect();
+
+    // First pass: calculate max width of market count for alignment
+    let max_markets_width = visible_events
+        .iter()
+        .map(|(_, event)| event.markets.len().to_string().len())
+        .max()
+        .unwrap_or(1);
+
+    let items: Vec<ListItem> = visible_events
+        .into_iter()
+        .map(|(idx, event)| {
+            let is_selected = idx == selected_index;
+
+            // Check if event is closed/inactive
+            let is_closed = event.closed || !event.active;
+
+            // Calculate total volume from markets
+            let total_volume: f64 = event
+                .markets
+                .iter()
+                .map(|m| m.volume_24hr.or(m.volume_total).unwrap_or(0.0))
+                .sum();
+
+            // Format volume
+            let volume_str = if total_volume >= 1_000_000.0 {
+                format!("${:.1}M", total_volume / 1_000_000.0)
+            } else if total_volume >= 1_000.0 {
+                format!("${:.1}K", total_volume / 1_000.0)
+            } else {
+                format!("${:.0}", total_volume)
+            };
+
+            // Format market count with padding
+            let markets_str = format!("{:>width$}", event.markets.len(), width = max_markets_width);
+
+            // Build the display line with favorite icon (all favorites are bookmarked)
+            let mut spans = vec![Span::styled("⚑ ", Style::default().fg(Color::Magenta))];
+
+            // Check for yield opportunities
+            if event_has_yield(event) {
+                spans.push(Span::styled("$ ", Style::default().fg(Color::Green)));
+            }
+
+            // Title with appropriate styling
+            let title_style = if is_closed {
+                Style::default().fg(Color::DarkGray)
+            } else if is_selected {
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            spans.push(Span::styled(truncate(&event.title, 40), title_style));
+
+            // Volume
+            spans.push(Span::styled(
+                format!(" {}", volume_str),
+                Style::default().fg(if is_closed {
+                    Color::DarkGray
+                } else {
+                    Color::Green
+                }),
+            ));
+
+            // Market count
+            spans.push(Span::styled(
+                format!(" {}", markets_str),
+                Style::default().fg(if is_closed {
+                    Color::DarkGray
+                } else {
+                    Color::Cyan
+                }),
+            ));
+
+            let line = Line::from(spans);
+            let mut item = ListItem::new(line);
+
+            if is_selected {
+                item = item.style(
+                    Style::default()
+                        .bg(Color::Rgb(60, 60, 80))
+                        .add_modifier(Modifier::BOLD),
+                );
+            }
+
+            item
+        })
+        .collect();
+
+    let is_focused = app.navigation.focused_panel == FocusedPanel::EventsList;
+    let block_style = if is_focused {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
+
+    let title = format!(" Favorites ({}) ", events.len());
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title(title)
+                .border_style(block_style),
+        )
+        .highlight_style(
+            Style::default()
+                .bg(Color::Rgb(60, 60, 80))
+                .add_modifier(Modifier::BOLD),
+        );
+    f.render_widget(list, area);
+
+    // Render scrollbar if needed
+    let total_items = events.len();
+    let visible_height = area.height.saturating_sub(2) as usize;
+    if total_items > visible_height {
+        let mut scrollbar_state = ScrollbarState::new(total_items)
+            .position(scroll)
+            .viewport_content_length(visible_height);
+        f.render_stateful_widget(
+            Scrollbar::default()
+                .orientation(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("↑"))
+                .end_symbol(Some("↓")),
+            area,
+            &mut scrollbar_state,
+        );
+    }
 }
 
 /// Render the yield opportunities tab
