@@ -340,6 +340,165 @@ fn spawn_fetch_user_profile(app_state: Arc<TokioMutex<TrendingAppState>>, addres
     });
 }
 
+/// Spawn async task to fetch user's portfolio data (balance, positions)
+fn spawn_fetch_portfolio(app_state: Arc<TokioMutex<TrendingAppState>>, address: String) {
+    use polymarket_api::{DataClient, clob::AssetType};
+
+    tokio::spawn(async move {
+        let clob_client = ClobClient::from_env();
+        let data_client = DataClient::new();
+
+        // Fetch USDC balance
+        if clob_client.has_auth() {
+            match clob_client
+                .get_balance_allowance(AssetType::Collateral)
+                .await
+            {
+                Ok(balance_info) => {
+                    // Balance is in smallest units (6 decimals for USDC)
+                    let balance: f64 = balance_info
+                        .balance
+                        .parse()
+                        .map(|b: f64| b / 1_000_000.0)
+                        .unwrap_or(0.0);
+                    log_info!("Fetched balance: ${:.2} USDC", balance);
+
+                    let mut app = app_state.lock().await;
+                    app.auth_state.balance = Some(balance);
+                },
+                Err(e) => {
+                    log_debug!("Failed to fetch balance: {}", e);
+                },
+            }
+        }
+
+        // Fetch positions
+        match data_client.get_positions(&address).await {
+            Ok(positions) => {
+                // Calculate totals from positions
+                let total_value: f64 = positions.iter().filter_map(|p| p.current_value).sum();
+                let positions_count = positions.len();
+
+                // Sum up unrealized P&L (cash_pnl) from all positions
+                let unrealized_pnl: f64 = positions.iter().filter_map(|p| p.cash_pnl).sum();
+
+                // Sum up realized P&L from all positions
+                let realized_pnl: f64 = positions.iter().filter_map(|p| p.realized_pnl).sum();
+
+                log_info!(
+                    "Fetched portfolio: {} positions, ${:.2} value, unrealized P&L: ${:.2}, realized P&L: ${:.2}",
+                    positions_count,
+                    total_value,
+                    unrealized_pnl,
+                    realized_pnl
+                );
+
+                let mut app = app_state.lock().await;
+                app.auth_state.portfolio_value = Some(total_value);
+                app.auth_state.positions_count = Some(positions_count);
+                app.auth_state.unrealized_pnl = Some(unrealized_pnl);
+                app.auth_state.realized_pnl = Some(realized_pnl);
+            },
+            Err(e) => {
+                log_debug!("Failed to fetch positions: {}", e);
+            },
+        }
+    });
+}
+
+/// Spawn async task to toggle favorite status for an event
+fn spawn_toggle_favorite(
+    app_state: Arc<TokioMutex<TrendingAppState>>,
+    event_id: String,
+    event_slug: String,
+    event: Option<polymarket_api::gamma::Event>,
+) {
+    use polymarket_api::{GammaAuth, GammaClient};
+
+    tokio::spawn(async move {
+        // Load auth config to get session cookies
+        let auth_config = match crate::auth::AuthConfig::load() {
+            Some(config) => config,
+            None => {
+                log_error!("No auth config found for toggling favorite");
+                return;
+            },
+        };
+
+        // Check if session cookie is available
+        if auth_config.session_cookie.is_none() {
+            log_error!("Session cookie required for favorites");
+            return;
+        }
+
+        // Create authenticated gamma client with session cookies
+        let gamma_auth = GammaAuth {
+            api_key: auth_config.api_key,
+            api_secret: auth_config.secret,
+            passphrase: auth_config.passphrase,
+            address: auth_config.address,
+            session_cookie: auth_config.session_cookie,
+            session_nonce: auth_config.session_nonce,
+            session_auth_type: auth_config.session_auth_type,
+        };
+        let gamma_client = GammaClient::with_auth(gamma_auth);
+
+        // Check current favorite status and toggle
+        let is_currently_favorite = {
+            let app = app_state.lock().await;
+            app.favorites_state.is_favorite(&event_slug)
+        };
+
+        if is_currently_favorite {
+            // Find the favorite ID to remove
+            let favorite_id = {
+                let app = app_state.lock().await;
+                app.favorites_state
+                    .favorite_ids
+                    .iter()
+                    .find(|f| f.event_id == event_id)
+                    .map(|f| f.id)
+            };
+
+            if let Some(fav_id) = favorite_id {
+                match gamma_client.remove_favorite_event(fav_id).await {
+                    Ok(()) => {
+                        log_info!("Removed favorite: {}", event_slug);
+                        let mut app = app_state.lock().await;
+                        app.favorites_state.favorite_event_slugs.remove(&event_slug);
+                        app.favorites_state
+                            .favorite_ids
+                            .retain(|f| f.event_id != event_id);
+                        app.favorites_state.events.retain(|e| e.slug != event_slug);
+                    },
+                    Err(e) => {
+                        log_error!("Failed to remove favorite: {}", e);
+                    },
+                }
+            }
+        } else {
+            // Add to favorites
+            match gamma_client.add_favorite_event(&event_id).await {
+                Ok(favorite_entry) => {
+                    log_info!("Added favorite: {}", event_slug);
+                    let mut app = app_state.lock().await;
+                    app.favorites_state
+                        .favorite_event_slugs
+                        .insert(event_slug.clone());
+                    app.favorites_state.favorite_ids.push(favorite_entry);
+                    // Add the event to favorites list if we have the full event data
+                    if let Some(evt) = event {
+                        app.favorites_state.events.push(evt);
+                    }
+                },
+                Err(e) => {
+                    log_error!("Failed to add favorite: {}", e);
+                },
+            }
+        }
+    });
+}
+
 /// Fetch trade count for an event's markets using authenticated CLOB API
 /// Returns total number of trades across all markets in the event
 async fn fetch_event_trade_count(
@@ -628,18 +787,38 @@ fn spawn_fetch_favorites(app_state: Arc<TokioMutex<TrendingAppState>>) {
 
         log_info!("Found {} favorites", favorites.len());
 
-        // Extract events from favorites (the API returns full event data embedded)
-        let events: Vec<_> = favorites
-            .iter()
-            .filter_map(|fav| fav.event.clone())
-            .collect();
+        // Fetch full event data for each favorite (the embedded events have empty markets)
+        let mut events = Vec::with_capacity(favorites.len());
+        for fav in &favorites {
+            match gamma_client.get_event_by_id(&fav.event_id).await {
+                Ok(Some(event)) => {
+                    log_info!(
+                        "Fetched event: {} with {} markets",
+                        event.title,
+                        event.markets.len()
+                    );
+                    events.push(event);
+                },
+                Ok(None) => {
+                    log_warn!("Event {} not found", fav.event_id);
+                },
+                Err(e) => {
+                    log_error!("Failed to fetch event {}: {}", fav.event_id, e);
+                },
+            }
+        }
 
-        log_info!("Loaded {} favorite events", events.len());
+        log_info!("Loaded {} favorite events with full data", events.len());
+
+        // Build slug lookup set for quick favorite checking
+        let favorite_slugs: std::collections::HashSet<String> =
+            events.iter().map(|e| e.slug.clone()).collect();
 
         // Update state
         let mut app = app_state.lock().await;
         app.favorites_state.events = events;
         app.favorites_state.favorite_ids = favorites;
+        app.favorites_state.favorite_event_slugs = favorite_slugs;
         app.favorites_state.is_loading = false;
         app.favorites_state.selected_index = 0;
         app.favorites_state.scroll = 0;
@@ -825,8 +1004,14 @@ pub async fn run_trending_tui(
 
         // If no username saved, fetch profile from API
         if !has_username {
-            spawn_fetch_user_profile(Arc::clone(&app_state), address);
+            spawn_fetch_user_profile(Arc::clone(&app_state), address.clone());
         }
+
+        // Fetch portfolio data (balance, positions) in background
+        spawn_fetch_portfolio(Arc::clone(&app_state), address);
+
+        // Load favorites in background at startup
+        spawn_fetch_favorites(Arc::clone(&app_state));
     }
 
     // Fetch trade counts for the initially selected event (if authenticated)
@@ -1523,15 +1708,32 @@ pub async fn run_trending_tui(
                         },
                         KeyCode::Enter => {
                             // Validate and save credentials
+                            // Convert empty strings to None for optional cookie fields
+                            let session_cookie = if app.login_form.session_cookie.is_empty() {
+                                None
+                            } else {
+                                Some(app.login_form.session_cookie.clone())
+                            };
+                            let session_nonce = if app.login_form.session_nonce.is_empty() {
+                                None
+                            } else {
+                                Some(app.login_form.session_nonce.clone())
+                            };
+                            let session_auth_type = if app.login_form.session_auth_type.is_empty() {
+                                None
+                            } else {
+                                Some(app.login_form.session_auth_type.clone())
+                            };
+
                             let config = crate::auth::AuthConfig {
                                 api_key: app.login_form.api_key.clone(),
                                 secret: app.login_form.secret.clone(),
                                 passphrase: app.login_form.passphrase.clone(),
                                 address: app.login_form.address.clone(),
                                 username: None,
-                                session_cookie: None, // Can be added manually to config file
-                                session_nonce: None,
-                                session_auth_type: None,
+                                session_cookie,
+                                session_nonce,
+                                session_auth_type,
                             };
 
                             match config.validate() {
@@ -1855,6 +2057,80 @@ pub async fn run_trending_tui(
                             }
                         }
                     },
+                    KeyCode::Char('p') => {
+                        // Show profile popup (if authenticated and not in search/filter mode)
+                        if app.main_tab == MainTab::Yield && app.yield_state.is_searching {
+                            app.yield_state.add_search_char('p');
+                            yield_search_debounce = Some(tokio::time::Instant::now());
+                        } else if app.main_tab == MainTab::Yield && app.yield_state.is_filtering {
+                            app.yield_state.add_filter_char('p');
+                        } else if app.is_in_filter_mode() {
+                            app.add_search_char('p');
+                            if app.search.mode == SearchMode::ApiSearch {
+                                search_debounce = Some(tokio::time::Instant::now());
+                            }
+                        } else if app.auth_state.is_authenticated {
+                            app.show_popup(state::PopupType::UserProfile);
+                        }
+                    },
+                    KeyCode::Char('b') => {
+                        // Toggle bookmark/favorite for current event
+                        // Skip if in search/filter mode or if popup is open
+                        if app.main_tab == MainTab::Yield && app.yield_state.is_searching {
+                            app.yield_state.add_search_char('b');
+                            yield_search_debounce = Some(tokio::time::Instant::now());
+                        } else if app.main_tab == MainTab::Yield && app.yield_state.is_filtering {
+                            app.yield_state.add_filter_char('b');
+                        } else if app.is_in_filter_mode() {
+                            app.add_search_char('b');
+                            if app.search.mode == SearchMode::ApiSearch {
+                                search_debounce = Some(tokio::time::Instant::now());
+                            }
+                        } else if !app.has_popup() && app.auth_state.is_authenticated {
+                            // Get the event to toggle based on current tab
+                            let event_info: Option<(
+                                String,
+                                String,
+                                Option<polymarket_api::gamma::Event>,
+                            )> = match app.main_tab {
+                                MainTab::Trending | MainTab::Favorites => app
+                                    .selected_event()
+                                    .map(|e| (e.id.clone(), e.slug.clone(), Some(e.clone()))),
+                                MainTab::Yield => {
+                                    // For yield tab, get event_slug from selected opportunity
+                                    // We need to fetch the event to get the ID
+                                    if let Some(opp) = app.yield_state.selected_opportunity() {
+                                        // We have the slug but need the event_id
+                                        // Try to find it in the events cache or favorites
+                                        let event_id = app
+                                            .events
+                                            .iter()
+                                            .find(|e| e.slug == opp.event_slug)
+                                            .map(|e| e.id.clone())
+                                            .or_else(|| {
+                                                app.favorites_state
+                                                    .events
+                                                    .iter()
+                                                    .find(|e| e.slug == opp.event_slug)
+                                                    .map(|e| e.id.clone())
+                                            });
+                                        event_id.map(|id| (id, opp.event_slug.clone(), None))
+                                    } else {
+                                        None
+                                    }
+                                },
+                            };
+
+                            if let Some((event_id, event_slug, event)) = event_info {
+                                spawn_toggle_favorite(
+                                    Arc::clone(&app_state),
+                                    event_id,
+                                    event_slug,
+                                    event,
+                                );
+                            }
+                        }
+                    },
                     KeyCode::Char('/') => {
                         // API search mode - works in both Trending and Yield tabs
                         if app.main_tab == MainTab::Yield {
@@ -1905,24 +2181,20 @@ pub async fn run_trending_tui(
                             if app.search.mode == SearchMode::ApiSearch {
                                 search_debounce = Some(tokio::time::Instant::now());
                             }
-                        } else if app.main_tab == MainTab::Yield {
-                            // Open yield opportunity URL
-                            if let Some(opp) = app.yield_state.selected_opportunity() {
-                                let url =
-                                    format!("https://polymarket.com/event/{}", opp.event_slug);
-                                #[cfg(target_os = "macos")]
-                                let _ = std::process::Command::new("open").arg(&url).spawn();
-                                #[cfg(target_os = "linux")]
-                                let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
-                                #[cfg(target_os = "windows")]
-                                let _ = std::process::Command::new("cmd")
-                                    .args(["/C", "start", &url])
-                                    .spawn();
-                            }
-                        } else if app.navigation.focused_panel == FocusedPanel::EventDetails {
-                            // Open event URL from Trending tab
-                            if let Some(event) = app.selected_event() {
-                                let url = format!("https://polymarket.com/event/{}", event.slug);
+                        } else if !app.has_popup() {
+                            // Open event URL in browser (works from any panel, any tab)
+                            let event_slug: Option<String> = match app.main_tab {
+                                MainTab::Yield => app
+                                    .yield_state
+                                    .selected_opportunity()
+                                    .map(|o| o.event_slug.clone()),
+                                MainTab::Trending | MainTab::Favorites => {
+                                    app.selected_event().map(|e| e.slug.clone())
+                                },
+                            };
+
+                            if let Some(slug) = event_slug {
+                                let url = format!("https://polymarket.com/event/{}", slug);
                                 #[cfg(target_os = "macos")]
                                 let _ = std::process::Command::new("open").arg(&url).spawn();
                                 #[cfg(target_os = "linux")]
@@ -2014,8 +2286,17 @@ pub async fn run_trending_tui(
                             // Refresh yield opportunities
                             if !app.yield_state.is_loading {
                                 log_info!("Refreshing yield opportunities...");
-                                drop(app);
                                 spawn_yield_fetch(Arc::clone(&app_state));
+                                // Also refresh favorites in background
+                                if app.auth_state.is_authenticated {
+                                    spawn_fetch_favorites(Arc::clone(&app_state));
+                                }
+                            }
+                        } else if app.main_tab == MainTab::Favorites {
+                            // Refresh favorites list
+                            if !app.favorites_state.is_loading && app.auth_state.is_authenticated {
+                                log_info!("Refreshing favorites...");
+                                spawn_fetch_favorites(Arc::clone(&app_state));
                             }
                         } else if app.navigation.focused_panel == FocusedPanel::EventsList {
                             // Refresh events list and update cache
@@ -2025,6 +2306,7 @@ pub async fn run_trending_tui(
                             let limit = app.pagination.current_limit;
                             let app_state_clone = Arc::clone(&app_state);
                             let gamma_client = GammaClient::new();
+                            let is_authenticated = app.auth_state.is_authenticated;
 
                             log_info!("Refreshing events list...");
 
@@ -2049,6 +2331,11 @@ pub async fn run_trending_tui(
                                     },
                                 }
                             });
+
+                            // Also refresh favorites in background to sync bookmark icons
+                            if is_authenticated {
+                                spawn_fetch_favorites(Arc::clone(&app_state));
+                            }
                         } else if app.navigation.focused_panel == FocusedPanel::Markets
                             && let Some(event) = app.selected_event()
                         {

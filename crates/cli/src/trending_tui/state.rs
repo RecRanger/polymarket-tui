@@ -4,7 +4,7 @@ use {
     chrono::{DateTime, Utc},
     polymarket_api::{gamma::Event, rtds::RTDSMessage},
     ratatui::widgets::TableState,
-    std::collections::HashMap,
+    std::collections::{HashMap, HashSet},
     tokio::task::JoinHandle,
 };
 
@@ -179,6 +179,10 @@ pub enum LoginField {
     Secret,
     Passphrase,
     Address,
+    // Optional cookie fields for favorites
+    SessionCookie,
+    SessionNonce,
+    SessionAuthType,
 }
 
 /// Trade side (Buy or Sell)
@@ -316,16 +320,22 @@ impl LoginField {
             LoginField::ApiKey => LoginField::Secret,
             LoginField::Secret => LoginField::Passphrase,
             LoginField::Passphrase => LoginField::Address,
-            LoginField::Address => LoginField::ApiKey,
+            LoginField::Address => LoginField::SessionCookie,
+            LoginField::SessionCookie => LoginField::SessionNonce,
+            LoginField::SessionNonce => LoginField::SessionAuthType,
+            LoginField::SessionAuthType => LoginField::ApiKey,
         }
     }
 
     pub fn prev(&self) -> Self {
         match self {
-            LoginField::ApiKey => LoginField::Address,
+            LoginField::ApiKey => LoginField::SessionAuthType,
             LoginField::Secret => LoginField::ApiKey,
             LoginField::Passphrase => LoginField::Secret,
             LoginField::Address => LoginField::Passphrase,
+            LoginField::SessionCookie => LoginField::Address,
+            LoginField::SessionNonce => LoginField::SessionCookie,
+            LoginField::SessionAuthType => LoginField::SessionNonce,
         }
     }
 }
@@ -337,6 +347,10 @@ pub struct LoginFormState {
     pub secret: String,
     pub passphrase: String,
     pub address: String,
+    // Optional cookie fields for favorites functionality
+    pub session_cookie: String,
+    pub session_nonce: String,
+    pub session_auth_type: String,
     pub active_field: LoginField,
     pub error_message: Option<String>,
     pub is_validating: bool,
@@ -350,6 +364,9 @@ impl LoginFormState {
             secret: String::new(),
             passphrase: String::new(),
             address: String::new(),
+            session_cookie: String::new(),
+            session_nonce: String::new(),
+            session_auth_type: String::from("magic"), // Default to "magic"
             active_field: LoginField::ApiKey,
             error_message: None,
             is_validating: false,
@@ -362,6 +379,9 @@ impl LoginFormState {
             LoginField::Secret => &self.secret,
             LoginField::Passphrase => &self.passphrase,
             LoginField::Address => &self.address,
+            LoginField::SessionCookie => &self.session_cookie,
+            LoginField::SessionNonce => &self.session_nonce,
+            LoginField::SessionAuthType => &self.session_auth_type,
         }
     }
 
@@ -371,6 +391,9 @@ impl LoginFormState {
             LoginField::Secret => self.secret.push(c),
             LoginField::Passphrase => self.passphrase.push(c),
             LoginField::Address => self.address.push(c),
+            LoginField::SessionCookie => self.session_cookie.push(c),
+            LoginField::SessionNonce => self.session_nonce.push(c),
+            LoginField::SessionAuthType => self.session_auth_type.push(c),
         }
         self.error_message = None;
     }
@@ -389,6 +412,15 @@ impl LoginFormState {
             LoginField::Address => {
                 self.address.pop();
             },
+            LoginField::SessionCookie => {
+                self.session_cookie.pop();
+            },
+            LoginField::SessionNonce => {
+                self.session_nonce.pop();
+            },
+            LoginField::SessionAuthType => {
+                self.session_auth_type.pop();
+            },
         }
         self.error_message = None;
     }
@@ -398,6 +430,9 @@ impl LoginFormState {
         self.secret.clear();
         self.passphrase.clear();
         self.address.clear();
+        self.session_cookie.clear();
+        self.session_nonce.clear();
+        self.session_auth_type = String::from("magic"); // Reset to default
         self.active_field = LoginField::ApiKey;
         self.error_message = None;
         self.is_validating = false;
@@ -419,7 +454,11 @@ pub struct AuthState {
     pub is_authenticated: bool,
     pub username: Option<String>,
     pub address: Option<String>,
-    pub balance: Option<f64>,
+    pub balance: Option<f64>,           // USDC cash balance
+    pub portfolio_value: Option<f64>,   // Total portfolio value (positions)
+    pub positions_count: Option<usize>, // Number of open positions
+    pub unrealized_pnl: Option<f64>,    // Unrealized profit/loss
+    pub realized_pnl: Option<f64>,      // Realized profit/loss
     pub profile: Option<UserProfile>,
 }
 
@@ -430,6 +469,10 @@ impl AuthState {
             username: None,
             address: None,
             balance: None,
+            portfolio_value: None,
+            positions_count: None,
+            unrealized_pnl: None,
+            realized_pnl: None,
             profile: None,
         }
     }
@@ -825,6 +868,7 @@ impl YieldState {
 pub struct FavoritesState {
     pub events: Vec<Event>,
     pub favorite_ids: Vec<polymarket_api::FavoriteEvent>, // Favorite entries from API
+    pub favorite_event_slugs: HashSet<String>,            // Quick lookup for favorite slugs
     pub selected_index: usize,
     pub scroll: usize,
     pub is_loading: bool,
@@ -837,6 +881,7 @@ impl FavoritesState {
         Self {
             events: Vec::new(),
             favorite_ids: Vec::new(),
+            favorite_event_slugs: HashSet::new(),
             selected_index: 0,
             scroll: 0,
             is_loading: false,
@@ -846,6 +891,11 @@ impl FavoritesState {
 
     pub fn selected_event(&self) -> Option<&Event> {
         self.events.get(self.selected_index)
+    }
+
+    /// Check if an event slug is in favorites
+    pub fn is_favorite(&self, slug: &str) -> bool {
+        self.favorite_event_slugs.contains(slug)
     }
 
     pub fn move_up(&mut self) {
@@ -1015,7 +1065,13 @@ impl TrendingAppState {
     /// If in local filter mode, always filter locally from current list
     /// If in API search mode and results are available, use those
     /// Otherwise filter locally
+    /// For Favorites tab, returns favorites events (search not supported yet)
     pub fn filtered_events(&self) -> Vec<&Event> {
+        // For Favorites tab, just return favorites events (no search support yet)
+        if self.main_tab == MainTab::Favorites {
+            return self.favorites_state.events.iter().collect();
+        }
+
         if self.search.query.is_empty() {
             // No query, return all events from the current source
             // If we have search results and not in local filter mode, return those; otherwise return all events
@@ -1097,9 +1153,11 @@ impl TrendingAppState {
     }
 
     /// Get the currently selected event from filtered list
+    /// Uses current_selected_index() to be tab-aware
     pub fn selected_event_filtered(&self) -> Option<&Event> {
         let filtered = self.filtered_events();
-        filtered.get(self.navigation.selected_index).copied()
+        let selected_idx = self.current_selected_index();
+        filtered.get(selected_idx).copied()
     }
 
     pub fn enter_search_mode(&mut self) {
@@ -1163,6 +1221,31 @@ impl TrendingAppState {
 
     pub fn selected_event_slug(&self) -> Option<String> {
         self.selected_event().map(|e| e.slug.clone())
+    }
+
+    /// Get the current tab's selected index
+    pub fn current_selected_index(&self) -> usize {
+        match self.main_tab {
+            MainTab::Favorites => self.favorites_state.selected_index,
+            _ => self.navigation.selected_index,
+        }
+    }
+
+    /// Get the current tab's scroll position for the events list
+    pub fn current_events_scroll(&self) -> usize {
+        match self.main_tab {
+            MainTab::Favorites => self.favorites_state.scroll,
+            _ => self.scroll.events_list,
+        }
+    }
+
+    /// Get events for the current tab (without filtering)
+    #[allow(dead_code)]
+    pub fn current_events(&self) -> Vec<&Event> {
+        match self.main_tab {
+            MainTab::Favorites => self.favorites_state.events.iter().collect(),
+            _ => self.events.iter().collect(),
+        }
     }
 
     pub fn move_up(&mut self) {

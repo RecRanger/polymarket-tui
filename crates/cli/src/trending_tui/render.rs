@@ -280,7 +280,10 @@ pub fn render(f: &mut Frame, app: &mut TrendingAppState) {
     } else if app.search.mode == SearchMode::LocalFilter {
         "Type to filter | Esc: Cancel".to_string()
     } else {
-        format!("{} | l: Logs | q: Quit | [{}]", panel_help, panel_name)
+        format!(
+            "{} | b: Bookmark | p: Profile | l: Logs | q: Quit | [{}]",
+            panel_help, panel_name
+        )
     };
     let footer = Paragraph::new(footer_text)
         .block(
@@ -376,21 +379,56 @@ fn render_header(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             ])
             .split(area);
 
-        // Determine button text first to calculate width
-        let (button_text, button_style) = if app.auth_state.is_authenticated {
-            let name = app.auth_state.display_name();
-            (format!("[ {} ]", name), Style::default().fg(Color::Green))
-        } else {
-            ("[ Login ]".to_string(), Style::default().fg(Color::Cyan))
-        };
-        let button_width = button_text.len() as u16;
+        // Build right side: portfolio info + profile button
+        let mut right_spans: Vec<Span> = Vec::new();
 
-        // Split tabs line: tabs on left, login button on right
+        // Add portfolio info if authenticated and available
+        if app.auth_state.is_authenticated {
+            // Total value (cash + portfolio)
+            if app.auth_state.balance.is_some() || app.auth_state.portfolio_value.is_some() {
+                let total = app.auth_state.balance.unwrap_or(0.0)
+                    + app.auth_state.portfolio_value.unwrap_or(0.0);
+                right_spans.push(Span::styled(
+                    format!("${:.0}", total),
+                    Style::default().fg(Color::Green),
+                ));
+                right_spans.push(Span::raw(" "));
+            }
+
+            // P&L
+            if app.auth_state.unrealized_pnl.is_some() || app.auth_state.realized_pnl.is_some() {
+                let total_pnl = app.auth_state.unrealized_pnl.unwrap_or(0.0)
+                    + app.auth_state.realized_pnl.unwrap_or(0.0);
+                let (pnl_str, pnl_color) = if total_pnl.abs() < 0.005 {
+                    ("$0".to_string(), Color::DarkGray)
+                } else if total_pnl > 0.0 {
+                    (format!("+${:.0}", total_pnl), Color::Green)
+                } else {
+                    (format!("-${:.0}", total_pnl.abs()), Color::Red)
+                };
+                right_spans.push(Span::styled(pnl_str, Style::default().fg(pnl_color)));
+                right_spans.push(Span::raw(" "));
+            }
+
+            // Profile button
+            let name = app.auth_state.display_name();
+            right_spans.push(Span::styled(
+                format!("[ {} ]", name),
+                Style::default().fg(Color::Green),
+            ));
+        } else {
+            right_spans.push(Span::styled("[ Login ]", Style::default().fg(Color::Cyan)));
+        }
+
+        let right_line = Line::from(right_spans);
+        let right_width = right_line.width() as u16;
+
+        // Split tabs line: tabs on left, portfolio + button on right
         let tabs_line_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Min(0),               // Tabs (fill remaining space)
-                Constraint::Length(button_width), // Login/user button (dynamic width)
+                Constraint::Min(0),              // Tabs (fill remaining space)
+                Constraint::Length(right_width), // Portfolio info + button
             ])
             .split(header_chunks[0]);
 
@@ -413,11 +451,9 @@ fn render_header(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             .divider(" ");
         f.render_widget(tabs, tabs_line_chunks[0]);
 
-        // Render login/user button on the right
-        let login_button = Paragraph::new(button_text)
-            .style(button_style)
-            .alignment(Alignment::Right);
-        f.render_widget(login_button, tabs_line_chunks[1]);
+        // Render portfolio info + login/user button on the right
+        let right_paragraph = Paragraph::new(right_line).alignment(Alignment::Right);
+        f.render_widget(right_paragraph, tabs_line_chunks[1]);
 
         // Horizontal separator line (gitui-style) - full width line of ─ characters
         let line_width = header_chunks[1].width as usize;
@@ -446,18 +482,36 @@ fn render_favorites_tab(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         return;
     }
 
-    // Show loading state
+    // Show loading state - use same layout but with loading indicator
     if favorites_state.is_loading {
-        let loading = Paragraph::new("Loading favorites...")
+        let main_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(40), // Events list
+                Constraint::Fill(1),        // Right side
+            ])
+            .split(area);
+
+        // Events panel with "Loading..." title
+        let loading_list = Paragraph::new("Loading favorites...")
             .block(
                 Block::default()
-                    .title(" Favorites ")
+                    .title(" Events (Loading...) ")
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded),
             )
             .alignment(Alignment::Center)
             .style(Style::default().fg(Color::Yellow));
-        f.render_widget(loading, area);
+        f.render_widget(loading_list, main_chunks[0]);
+
+        // Empty right panel
+        let empty_details = Paragraph::new("").block(
+            Block::default()
+                .title(" Event Details ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded),
+        );
+        f.render_widget(empty_details, main_chunks[1]);
         return;
     }
 
@@ -559,140 +613,17 @@ fn render_favorites_tab(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         return;
     }
 
-    // Split into list on left and details on right
-    let chunks = Layout::default()
+    // Use the same layout as Trending tab - events list + trades view
+    let main_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(45), // Favorites list
-            Constraint::Fill(1),        // Details panel
+            Constraint::Percentage(40), // Events list
+            Constraint::Fill(1),        // Right side takes remaining space
         ])
         .split(area);
 
-    render_favorites_list(f, app, chunks[0]);
-    render_favorites_details(f, app, chunks[1]);
-}
-
-fn render_favorites_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
-    let favorites_state = &app.favorites_state;
-
-    let items: Vec<ListItem> = favorites_state
-        .events
-        .iter()
-        .enumerate()
-        .map(|(i, event)| {
-            let is_selected = i == favorites_state.selected_index;
-            let style = if is_selected {
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::White)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::White)
-            };
-
-            // Truncate title if needed
-            let max_width = area.width.saturating_sub(4) as usize;
-            let title = if event.title.len() > max_width {
-                format!("{}...", &event.title[..max_width.saturating_sub(3)])
-            } else {
-                event.title.clone()
-            };
-
-            ListItem::new(title).style(style)
-        })
-        .collect();
-
-    let title = format!(" Favorites ({}) ", favorites_state.events.len());
-    let list = List::new(items)
-        .block(
-            Block::default()
-                .title(title)
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::Magenta)),
-        )
-        .highlight_style(
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        );
-
-    let mut list_state = ListState::default();
-    list_state.select(Some(favorites_state.selected_index));
-    f.render_stateful_widget(list, area, &mut list_state);
-}
-
-fn render_favorites_details(f: &mut Frame, app: &TrendingAppState, area: Rect) {
-    let favorites_state = &app.favorites_state;
-
-    let content = if let Some(event) = favorites_state.selected_event() {
-        let mut lines = vec![
-            Line::from(Span::styled(
-                &event.title,
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::from(""),
-        ];
-
-        // Add tags if available
-        if !event.tags.is_empty() {
-            let tag_labels: Vec<&str> = event.tags.iter().map(|t| t.label.as_str()).collect();
-            lines.push(Line::from(Span::styled(
-                format!("Tags: {}", tag_labels.join(", ")),
-                Style::default().fg(Color::DarkGray),
-            )));
-            lines.push(Line::from(""));
-        }
-
-        // Add end date if available
-        if let Some(ref end_date) = event.end_date {
-            lines.push(Line::from(format!("End Date: {}", end_date)));
-            lines.push(Line::from(""));
-        }
-
-        // Add markets info
-        if !event.markets.is_empty() {
-            lines.push(Line::from(Span::styled(
-                format!("Markets ({})", event.markets.len()),
-                Style::default().add_modifier(Modifier::BOLD),
-            )));
-
-            for market in &event.markets {
-                let outcomes: Vec<String> = market
-                    .outcome_prices
-                    .iter()
-                    .zip(market.outcomes.iter())
-                    .map(|(price, outcome)| {
-                        let price_val: f64 = price.parse().unwrap_or(0.0);
-                        format!("{}: {}%", outcome, (price_val * 100.0) as i32)
-                    })
-                    .collect();
-                lines.push(Line::from(format!(
-                    "  {} - {}",
-                    market.question,
-                    outcomes.join(" / ")
-                )));
-            }
-        }
-
-        lines
-    } else {
-        vec![Line::from("No event selected")]
-    };
-
-    let details = Paragraph::new(content)
-        .block(
-            Block::default()
-                .title(" Event Details ")
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::Magenta)),
-        )
-        .wrap(Wrap { trim: true });
-    f.render_widget(details, area);
+    render_events_list(f, app, main_chunks[0]);
+    render_trades(f, app, main_chunks[1]);
 }
 
 /// Render the yield opportunities tab
@@ -1694,11 +1625,77 @@ fn render_popup(f: &mut Frame, app: &TrendingAppState, popup: &PopupType) {
     f.render_widget(paragraph, area);
 }
 
+/// Helper to render an input field in the login form
+fn render_login_input_field(
+    f: &mut Frame,
+    inner_x: u16,
+    field_y: u16,
+    label_width: u16,
+    field_width: u16,
+    label: &str,
+    value: &str,
+    is_active: bool,
+    is_secret: bool,
+) -> Option<ratatui::layout::Position> {
+    use ratatui::layout::Position;
+
+    // Render label
+    let label_para =
+        Paragraph::new(format!("{}:", label)).style(Style::default().fg(Color::Yellow).bold());
+    let label_area = Rect {
+        x: inner_x,
+        y: field_y,
+        width: label_width,
+        height: 1,
+    };
+    f.render_widget(label_para, label_area);
+
+    // Render input box with background
+    let input_area = Rect {
+        x: inner_x + label_width,
+        y: field_y,
+        width: field_width,
+        height: 1,
+    };
+
+    // Display value (masked for secrets)
+    let display_value = if is_secret && !value.is_empty() {
+        "*".repeat(value.len().min(field_width as usize - 2))
+    } else {
+        value.to_string()
+    };
+
+    // Style: different background for input field, highlighted when active
+    let (fg_color, bg_color) = if is_active {
+        (Color::White, Color::DarkGray)
+    } else {
+        (Color::Gray, Color::Rgb(30, 30, 30))
+    };
+
+    // Pad the display value to fill the field width (creates visible input area)
+    let padded_value = format!(
+        "{:<width$}",
+        display_value,
+        width = field_width as usize - 1
+    );
+
+    let input_para = Paragraph::new(padded_value).style(Style::default().fg(fg_color).bg(bg_color));
+    f.render_widget(input_para, input_area);
+
+    // Return cursor position if this field is active
+    if is_active {
+        let cursor_x = input_area.x + display_value.len() as u16;
+        Some(Position::new(cursor_x, input_area.y))
+    } else {
+        None
+    }
+}
+
 /// Render the login popup with input fields
 fn render_login_popup(f: &mut Frame, app: &TrendingAppState) {
     use ratatui::layout::Position;
 
-    let area = centered_rect(70, 70, f.area());
+    let area = centered_rect(80, 85, f.area());
     f.render_widget(Clear, area);
 
     let form = &app.login_form;
@@ -1712,7 +1709,7 @@ fn render_login_popup(f: &mut Frame, app: &TrendingAppState) {
     };
 
     // Field width for input boxes (leaving room for label)
-    let label_width = 12u16;
+    let label_width = 14u16;
     let field_width = inner_area.width.saturating_sub(label_width + 2);
 
     // Render the main popup block
@@ -1738,73 +1735,16 @@ fn render_login_popup(f: &mut Frame, app: &TrendingAppState) {
     // Track cursor position for the active field
     let mut cursor_position: Option<Position> = None;
 
-    // Helper to render an input field with a bordered box
-    let render_input_field = |f: &mut Frame,
-                              y_offset: u16,
-                              label: &str,
-                              value: &str,
-                              is_active: bool,
-                              is_secret: bool|
-     -> Option<Position> {
-        let field_y = inner_area.y + 3 + y_offset * 3;
+    // Starting y position for fields
+    let base_y = inner_area.y + 3;
 
-        // Render label
-        let label_para =
-            Paragraph::new(format!("{}:", label)).style(Style::default().fg(Color::Yellow).bold());
-        let label_area = Rect {
-            x: inner_area.x,
-            y: field_y,
-            width: label_width,
-            height: 1,
-        };
-        f.render_widget(label_para, label_area);
-
-        // Render input box with background
-        let input_area = Rect {
-            x: inner_area.x + label_width,
-            y: field_y,
-            width: field_width,
-            height: 1,
-        };
-
-        // Display value (masked for secrets)
-        let display_value = if is_secret && !value.is_empty() {
-            "*".repeat(value.len().min(field_width as usize - 2))
-        } else {
-            value.to_string()
-        };
-
-        // Style: different background for input field, highlighted when active
-        let (fg_color, bg_color) = if is_active {
-            (Color::White, Color::DarkGray)
-        } else {
-            (Color::Gray, Color::Rgb(30, 30, 30))
-        };
-
-        // Pad the display value to fill the field width (creates visible input area)
-        let padded_value = format!(
-            "{:<width$}",
-            display_value,
-            width = field_width as usize - 1
-        );
-
-        let input_para =
-            Paragraph::new(padded_value).style(Style::default().fg(fg_color).bg(bg_color));
-        f.render_widget(input_para, input_area);
-
-        // Return cursor position if this field is active
-        if is_active {
-            let cursor_x = input_area.x + display_value.len() as u16;
-            Some(Position::new(cursor_x, input_area.y))
-        } else {
-            None
-        }
-    };
-
-    // Render each field
-    if let Some(pos) = render_input_field(
+    // Render required fields (each field takes 2 rows)
+    if let Some(pos) = render_login_input_field(
         f,
-        0,
+        inner_area.x,
+        base_y,
+        label_width,
+        field_width,
         "API Key",
         &form.api_key,
         form.active_field == LoginField::ApiKey,
@@ -1813,9 +1753,12 @@ fn render_login_popup(f: &mut Frame, app: &TrendingAppState) {
         cursor_position = Some(pos);
     }
 
-    if let Some(pos) = render_input_field(
+    if let Some(pos) = render_login_input_field(
         f,
-        1,
+        inner_area.x,
+        base_y + 2,
+        label_width,
+        field_width,
         "Secret",
         &form.secret,
         form.active_field == LoginField::Secret,
@@ -1824,9 +1767,12 @@ fn render_login_popup(f: &mut Frame, app: &TrendingAppState) {
         cursor_position = Some(pos);
     }
 
-    if let Some(pos) = render_input_field(
+    if let Some(pos) = render_login_input_field(
         f,
-        2,
+        inner_area.x,
+        base_y + 4,
+        label_width,
+        field_width,
         "Passphrase",
         &form.passphrase,
         form.active_field == LoginField::Passphrase,
@@ -1835,9 +1781,12 @@ fn render_login_popup(f: &mut Frame, app: &TrendingAppState) {
         cursor_position = Some(pos);
     }
 
-    if let Some(pos) = render_input_field(
+    if let Some(pos) = render_login_input_field(
         f,
-        3,
+        inner_area.x,
+        base_y + 6,
+        label_width,
+        field_width,
         "Address",
         &form.address,
         form.active_field == LoginField::Address,
@@ -1846,8 +1795,86 @@ fn render_login_popup(f: &mut Frame, app: &TrendingAppState) {
         cursor_position = Some(pos);
     }
 
+    // Section header for optional cookies (after 4 fields = 8 rows + 1 gap)
+    let cookie_section_y = base_y + 9;
+    let cookie_header = Paragraph::new(Line::from(vec![
+        Span::styled(
+            "Optional: Browser Cookies ",
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "(for Favorites feature)",
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]));
+    let cookie_header_area = Rect {
+        x: inner_area.x,
+        y: cookie_section_y,
+        width: inner_area.width,
+        height: 1,
+    };
+    f.render_widget(cookie_header, cookie_header_area);
+
+    // Help text for cookies
+    let cookie_help = Paragraph::new("Get from browser DevTools > Application > Cookies")
+        .style(Style::default().fg(Color::DarkGray).italic());
+    let cookie_help_area = Rect {
+        x: inner_area.x,
+        y: cookie_section_y + 1,
+        width: inner_area.width,
+        height: 1,
+    };
+    f.render_widget(cookie_help, cookie_help_area);
+
+    // Render optional cookie fields
+    let cookie_fields_y = cookie_section_y + 3;
+
+    if let Some(pos) = render_login_input_field(
+        f,
+        inner_area.x,
+        cookie_fields_y,
+        label_width,
+        field_width,
+        "Session",
+        &form.session_cookie,
+        form.active_field == LoginField::SessionCookie,
+        false,
+    ) {
+        cursor_position = Some(pos);
+    }
+
+    if let Some(pos) = render_login_input_field(
+        f,
+        inner_area.x,
+        cookie_fields_y + 2,
+        label_width,
+        field_width,
+        "Nonce",
+        &form.session_nonce,
+        form.active_field == LoginField::SessionNonce,
+        false,
+    ) {
+        cursor_position = Some(pos);
+    }
+
+    if let Some(pos) = render_login_input_field(
+        f,
+        inner_area.x,
+        cookie_fields_y + 4,
+        label_width,
+        field_width,
+        "Auth Type",
+        &form.session_auth_type,
+        form.active_field == LoginField::SessionAuthType,
+        false,
+    ) {
+        cursor_position = Some(pos);
+    }
+
     // Error message area
-    let error_y = inner_area.y + 3 + 4 * 3;
+    let error_y = cookie_fields_y + 7;
     if let Some(ref error) = form.error_message {
         let error_para = Paragraph::new(format!("Error: {}", error))
             .style(Style::default().fg(Color::Red))
@@ -1877,7 +1904,9 @@ fn render_login_popup(f: &mut Frame, app: &TrendingAppState) {
     // Instructions at bottom
     let instructions = Line::from(vec![
         Span::styled("Tab", Style::default().fg(Color::Cyan).bold()),
-        Span::styled(" Next field  ", Style::default().fg(Color::DarkGray)),
+        Span::styled(" Next  ", Style::default().fg(Color::DarkGray)),
+        Span::styled("Shift+Tab", Style::default().fg(Color::Cyan).bold()),
+        Span::styled(" Prev  ", Style::default().fg(Color::DarkGray)),
         Span::styled("Enter", Style::default().fg(Color::Green).bold()),
         Span::styled(" Submit  ", Style::default().fg(Color::DarkGray)),
         Span::styled("Esc", Style::default().fg(Color::Red).bold()),
@@ -2018,13 +2047,106 @@ fn render_user_profile_popup(f: &mut Frame, app: &TrendingAppState) {
         ]));
     }
 
-    // Balance
+    // Balance (cash)
     if let Some(balance) = auth.balance {
         content.push(Line::from(vec![
-            Span::styled("Balance:   ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Cash:      ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 format!("${:.2} USDC", balance),
                 Style::default().fg(Color::Green),
+            ),
+        ]));
+    }
+
+    // Portfolio value
+    if let Some(portfolio_value) = auth.portfolio_value {
+        // Use abs() to avoid displaying -$0.00
+        let display_value = if portfolio_value.abs() < 0.005 {
+            0.0
+        } else {
+            portfolio_value
+        };
+        content.push(Line::from(vec![
+            Span::styled("Portfolio: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("${:.2}", display_value),
+                Style::default().fg(Color::Green),
+            ),
+        ]));
+    }
+
+    // Positions count
+    if let Some(positions_count) = auth.positions_count {
+        content.push(Line::from(vec![
+            Span::styled("Positions: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{}", positions_count),
+                Style::default().fg(Color::Cyan),
+            ),
+        ]));
+    }
+
+    // Total value (cash + portfolio)
+    if auth.balance.is_some() || auth.portfolio_value.is_some() {
+        let total = auth.balance.unwrap_or(0.0) + auth.portfolio_value.unwrap_or(0.0);
+        content.push(Line::from(""));
+        content.push(Line::from(vec![
+            Span::styled("Total:     ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("${:.2}", total),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+    }
+
+    // Profit/Loss section
+    if auth.unrealized_pnl.is_some() || auth.realized_pnl.is_some() {
+        content.push(Line::from(""));
+        content.push(Line::from(vec![Span::styled(
+            "─".repeat(55),
+            Style::default().fg(Color::DarkGray),
+        )]));
+
+        content.push(Line::from(""));
+        content.push(Line::from(vec![Span::styled(
+            "Profit / Loss",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        )]));
+        content.push(Line::from(""));
+
+        // Unrealized P&L
+        if let Some(unrealized) = auth.unrealized_pnl {
+            let (pnl_str, pnl_color) = format_pnl(unrealized);
+            content.push(Line::from(vec![
+                Span::styled("Unrealized:", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!(" {}", pnl_str), Style::default().fg(pnl_color)),
+            ]));
+        }
+
+        // Realized P&L
+        if let Some(realized) = auth.realized_pnl {
+            let (pnl_str, pnl_color) = format_pnl(realized);
+            content.push(Line::from(vec![
+                Span::styled("Realized:  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!(" {}", pnl_str), Style::default().fg(pnl_color)),
+            ]));
+        }
+
+        // Total P&L
+        let total_pnl = auth.unrealized_pnl.unwrap_or(0.0) + auth.realized_pnl.unwrap_or(0.0);
+        let (total_pnl_str, total_pnl_color) = format_pnl(total_pnl);
+        content.push(Line::from(""));
+        content.push(Line::from(vec![
+            Span::styled("Total P&L: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!(" {}", total_pnl_str),
+                Style::default()
+                    .fg(total_pnl_color)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]));
     }
@@ -2304,10 +2426,12 @@ fn render_trade_popup(f: &mut Frame, app: &TrendingAppState) {
 
 fn render_events_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
     let filtered_events = app.filtered_events();
+    let scroll = app.current_events_scroll();
+    let selected_index = app.current_selected_index();
     let visible_events: Vec<_> = filtered_events
         .iter()
         .enumerate()
-        .skip(app.scroll.events_list)
+        .skip(scroll)
         .take(area.height as usize - 2)
         .collect();
 
@@ -2321,7 +2445,7 @@ fn render_events_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
     let items: Vec<ListItem> = visible_events
         .into_iter()
         .map(|(idx, event)| {
-            let is_selected = idx == app.navigation.selected_index;
+            let is_selected = idx == selected_index;
 
             // Check if event is closed/inactive (not accepting trades)
             let is_closed = event.closed || !event.active;
@@ -2392,7 +2516,17 @@ fn render_events_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             };
             let yield_icon_width = yield_icon.width();
 
-            let reserved_width = right_text_width + 1 + closed_icon_width + yield_icon_width;
+            // Check if event is favorited
+            let is_favorite = app.favorites_state.is_favorite(&event.slug);
+            let favorite_icon = if is_favorite {
+                "⚑ "
+            } else {
+                ""
+            };
+            let favorite_icon_width = favorite_icon.width();
+
+            let reserved_width =
+                right_text_width + 1 + closed_icon_width + yield_icon_width + favorite_icon_width;
             let available_width = usable_width.saturating_sub(reserved_width);
 
             // Truncate title to fit available space (using display width)
@@ -2402,10 +2536,17 @@ fn render_events_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             let remaining_width = usable_width
                 .saturating_sub(closed_icon_width)
                 .saturating_sub(yield_icon_width)
+                .saturating_sub(favorite_icon_width)
                 .saturating_sub(title_width)
                 .saturating_sub(right_text_width);
 
             let mut line_spans = Vec::new();
+            if is_favorite {
+                line_spans.push(Span::styled(
+                    favorite_icon,
+                    Style::default().fg(Color::Magenta),
+                ));
+            }
             if is_closed {
                 line_spans.push(Span::styled(closed_icon, Style::default().fg(Color::Red)));
             }
@@ -2478,11 +2619,7 @@ fn render_events_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
     );
 
     let mut state = ListState::default();
-    state.select(Some(
-        app.navigation
-            .selected_index
-            .saturating_sub(app.scroll.events_list),
-    ));
+    state.select(Some(selected_index.saturating_sub(scroll)));
     f.render_stateful_widget(list, area, &mut state);
 
     // Render scrollbar for events list if needed
@@ -2494,7 +2631,7 @@ fn render_events_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         // This ensures the thumb is proportional to visible content
         // Position maps correctly: moving one line moves thumb proportionally
         let mut scrollbar_state = ScrollbarState::new(total_events)
-            .position(app.scroll.events_list)
+            .position(scroll)
             .viewport_content_length(visible_height);
         f.render_stateful_widget(
             Scrollbar::default()
@@ -3299,6 +3436,19 @@ pub fn truncate(s: &str, max_chars: usize) -> String {
     } else {
         let truncated: String = s.chars().take(max_chars.saturating_sub(3)).collect();
         format!("{}...", truncated)
+    }
+}
+
+/// Format a profit/loss value with appropriate sign and color
+/// Returns (formatted_string, color)
+fn format_pnl(value: f64) -> (String, Color) {
+    // Treat near-zero values as zero to avoid -$0.00
+    if value.abs() < 0.005 {
+        ("$0.00".to_string(), Color::DarkGray)
+    } else if value > 0.0 {
+        (format!("+${:.2}", value), Color::Green)
+    } else {
+        (format!("-${:.2}", value.abs()), Color::Red)
     }
 }
 

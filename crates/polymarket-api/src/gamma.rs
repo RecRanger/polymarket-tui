@@ -734,6 +734,7 @@ impl GammaClient {
 
     /// Create L2 authentication headers for a request
     /// This uses the same HMAC-based authentication as the CLOB API
+    #[allow(dead_code)]
     fn create_auth_headers(
         &self,
         method: &str,
@@ -840,10 +841,11 @@ impl GammaClient {
     }
 
     /// Add an event to favorites
+    /// Requires a valid session cookie (browser-based authentication)
     pub async fn add_favorite_event(&self, event_id: &str) -> Result<FavoriteEvent> {
-        if !self.has_auth() {
+        if !self.has_session_cookie() {
             return Err(crate::error::PolymarketError::InvalidData(
-                "Authentication required for favorite events".to_string(),
+                "Session cookie required for favorite events".to_string(),
             ));
         }
 
@@ -854,7 +856,9 @@ impl GammaClient {
             event_id: event_id.to_string(),
         })?;
 
-        let headers = self.create_auth_headers("POST", request_path, Some(&body))?;
+        log_info!("POST {} (cookie auth)", request_path);
+
+        let headers = self.create_cookie_headers()?;
 
         let response = self
             .client
@@ -881,17 +885,20 @@ impl GammaClient {
     }
 
     /// Remove an event from favorites
+    /// Requires a valid session cookie (browser-based authentication)
     pub async fn remove_favorite_event(&self, favorite_id: i64) -> Result<()> {
-        if !self.has_auth() {
+        if !self.has_session_cookie() {
             return Err(crate::error::PolymarketError::InvalidData(
-                "Authentication required for favorite events".to_string(),
+                "Session cookie required for favorite events".to_string(),
             ));
         }
 
         let url = format!("{}/favorite_events/{}", GAMMA_API_BASE, favorite_id);
         let request_path = format!("/favorite_events/{}", favorite_id);
 
-        let headers = self.create_auth_headers("DELETE", &request_path, None)?;
+        log_info!("DELETE {} (cookie auth)", request_path);
+
+        let headers = self.create_cookie_headers()?;
 
         let response = self.client.delete(&url).headers(headers).send().await?;
 
