@@ -4316,6 +4316,21 @@ fn render_markets(f: &mut Frame, app: &TrendingAppState, event: &Event, area: Re
     let mut sorted_markets: Vec<_> = event.markets.iter().collect();
     sorted_markets.sort_by_key(|m| m.closed);
 
+    // Fixed column widths for alignment
+    // Yield: "+XX.X%" = 6 chars max
+    // Volume: "$XXX.XM" = 7 chars max
+    // Button: "[XXXXXXXX XXXXX¢]" = outcome(8) + space + price(6) + brackets(2) = 17 chars max
+    const YIELD_COL_WIDTH: usize = 6;
+    const VOLUME_COL_WIDTH: usize = 7;
+    const BUTTON_COL_WIDTH: usize = 17;
+
+    // Calculate total fixed right content width for active markets
+    // Layout: [yield 6] [volume 7] [button1 17] [button2 17] + 3 spaces = 50
+    let fixed_right_width =
+        YIELD_COL_WIDTH + 1 + VOLUME_COL_WIDTH + 1 + BUTTON_COL_WIDTH + 1 + BUTTON_COL_WIDTH;
+    let usable_width = (area.width as usize).saturating_sub(2); // -2 for borders
+    let icon_width = 2; // "● " or "$ " etc.
+
     // Create list items for markets with scroll
     let items: Vec<ListItem> = sorted_markets
         .iter()
@@ -4371,10 +4386,9 @@ fn render_markets(f: &mut Frame, app: &TrendingAppState, event: &Event, area: Re
                 "● "
             };
 
-            // Build outcome display string
+            // Build outcome display string for closed markets
             let outcomes_str = if market.closed {
                 // For resolved markets, show only the winning side
-                // Find the outcome with highest price (closest to 1.0)
                 let winner = market
                     .outcomes
                     .iter()
@@ -4392,7 +4406,6 @@ fn render_markets(f: &mut Frame, app: &TrendingAppState, event: &Event, area: Re
                     .map(|(outcome, _)| format!("Winner: {}", outcome))
                     .unwrap_or_else(|| "Resolved".to_string())
             } else {
-                // For active markets, we'll show Buy buttons instead of prices
                 String::new()
             };
 
@@ -4464,61 +4477,26 @@ fn render_markets(f: &mut Frame, app: &TrendingAppState, event: &Event, area: Re
                 (String::new(), String::new())
             };
 
-            // Calculate widths for right alignment
-            let usable_width = (area.width as usize).saturating_sub(2); // -2 for borders
-
             // Format yield return string if applicable
             let yield_str = yield_return.map(|ret| format!("+{:.1}%", ret));
 
-            // Calculate space needed for right-aligned content
-            // For active markets: [yield] [volume] [Yes XX¢] [No XX¢]
-            // For closed markets: [Winner: X] [volume]
-            let outcomes_width = outcomes_str.width();
-            let volume_width = volume_str.len();
-            let yield_width = yield_str.as_ref().map(|s| s.len()).unwrap_or(0);
-            let yes_button_width = yes_button.len();
-            let no_button_width = no_button.len();
-
-            let has_outcomes = !outcomes_str.is_empty();
-            let has_volume = !volume_str.is_empty();
-            let has_yield_str = yield_str.is_some();
             let has_buttons = !market.closed;
 
-            // Calculate total right content width
-            let mut right_content_width = 0;
-            if has_yield_str {
-                right_content_width += yield_width;
-            }
-            if has_outcomes {
-                if right_content_width > 0 {
-                    right_content_width += 1; // space
-                }
-                right_content_width += outcomes_width;
-            }
-            if has_volume {
-                if right_content_width > 0 {
-                    right_content_width += 1; // space
-                }
-                right_content_width += volume_width;
-            }
-            if has_buttons {
-                if right_content_width > 0 {
-                    right_content_width += 1; // space
-                }
-                right_content_width += yes_button_width;
-                right_content_width += 1; // space between buttons
-                right_content_width += no_button_width;
-            }
-
-            // Calculate available width for question (reserve space for icon + right content + 1 space padding)
-            let icon_width = status_icon.width();
+            // Calculate available width for question
+            let right_content_width = if has_buttons {
+                fixed_right_width
+            } else {
+                // For closed markets: just outcomes + volume
+                let outcomes_width = outcomes_str.width();
+                let vol_width = volume_str.len();
+                outcomes_width + 1 + vol_width
+            };
             let available_width = usable_width
                 .saturating_sub(right_content_width)
                 .saturating_sub(icon_width)
-                .saturating_sub(1); // 1 space padding between question and right content
+                .saturating_sub(1); // 1 space padding
 
             // Truncate question to fit available width
-            // Use short name (group_item_title) if available and non-empty, otherwise fall back to question
             let display_name = market
                 .group_item_title
                 .as_deref()
@@ -4553,45 +4531,50 @@ fn render_markets(f: &mut Frame, app: &TrendingAppState, event: &Event, area: Re
                 line_spans.push(Span::styled(" ".repeat(remaining_width), Style::default()));
             }
 
-            // Add right-aligned content in order: [yield] [outcomes] [volume] [Yes] [No]
-            // Yield return (if any) - prepended before outcomes
-            if let Some(ref yield_s) = yield_str {
+            if has_buttons {
+                // For active markets: right-align each column within its fixed width
+                // Yield column (right-aligned within YIELD_COL_WIDTH)
+                let yield_display = yield_str.as_deref().unwrap_or("");
+                let yield_padded = format!("{:>width$}", yield_display, width = YIELD_COL_WIDTH);
                 line_spans.push(Span::styled(
-                    yield_s.clone(),
+                    yield_padded,
                     Style::default().fg(Color::Yellow),
                 ));
-                if has_outcomes || has_volume || has_buttons {
-                    line_spans.push(Span::styled(" ", Style::default()));
-                }
-            }
+                line_spans.push(Span::styled(" ", Style::default()));
 
-            // Outcomes (Winner display for closed markets)
-            if has_outcomes {
+                // Volume column (right-aligned within VOLUME_COL_WIDTH)
+                let volume_padded = format!("{:>width$}", volume_str, width = VOLUME_COL_WIDTH);
                 line_spans.push(Span::styled(
-                    outcomes_str.clone(),
-                    Style::default().fg(Color::Cyan),
-                ));
-                if has_volume || has_buttons {
-                    line_spans.push(Span::styled(" ", Style::default()));
-                }
-            }
-
-            // Volume
-            if has_volume {
-                line_spans.push(Span::styled(
-                    volume_str.clone(),
+                    volume_padded,
                     Style::default().fg(Color::Green),
                 ));
-                if has_buttons {
-                    line_spans.push(Span::styled(" ", Style::default()));
-                }
-            }
-
-            // Buy buttons for active markets
-            if has_buttons {
-                line_spans.push(Span::styled(yes_button, Style::default().fg(Color::Green)));
                 line_spans.push(Span::styled(" ", Style::default()));
-                line_spans.push(Span::styled(no_button, Style::default().fg(Color::Red)));
+
+                // Yes button (right-aligned within BUTTON_COL_WIDTH)
+                let yes_padded = format!("{:>width$}", yes_button, width = BUTTON_COL_WIDTH);
+                line_spans.push(Span::styled(yes_padded, Style::default().fg(Color::Green)));
+                line_spans.push(Span::styled(" ", Style::default()));
+
+                // No button (right-aligned within BUTTON_COL_WIDTH)
+                let no_padded = format!("{:>width$}", no_button, width = BUTTON_COL_WIDTH);
+                line_spans.push(Span::styled(no_padded, Style::default().fg(Color::Red)));
+            } else {
+                // For closed markets: show outcomes and volume
+                if !outcomes_str.is_empty() {
+                    line_spans.push(Span::styled(
+                        outcomes_str.clone(),
+                        Style::default().fg(Color::Cyan),
+                    ));
+                    if !volume_str.is_empty() {
+                        line_spans.push(Span::styled(" ", Style::default()));
+                    }
+                }
+                if !volume_str.is_empty() {
+                    line_spans.push(Span::styled(
+                        volume_str.clone(),
+                        Style::default().fg(Color::Green),
+                    ));
+                }
             }
 
             // Background color: highlight selected market, otherwise zebra striping

@@ -1764,7 +1764,7 @@ pub async fn run_trending_tui(
 
                                     // For active markets, check if click is on Yes/No buttons
                                     if !market.closed {
-                                        // Get prices for button text width calculation
+                                        // Get prices for trade popup
                                         let yes_price = if let Some(ref token_ids) =
                                             market.clob_token_ids
                                         {
@@ -1796,40 +1796,17 @@ pub async fn run_trending_tui(
                                                 .and_then(|p| p.parse::<f64>().ok())
                                         });
 
-                                        let yes_price_str = yes_price
-                                            .map(render::format_price_cents)
-                                            .unwrap_or_else(|| "N/A".to_string());
-                                        let no_price_str = no_price
-                                            .map(render::format_price_cents)
-                                            .unwrap_or_else(|| "N/A".to_string());
+                                        // Use fixed column widths (same as render.rs)
+                                        // Button column width = 17 chars each
+                                        const BUTTON_COL_WIDTH: u16 = 17;
 
-                                        // Get outcome names, truncate to max 8 chars (same as render)
-                                        let outcome_0 = market
-                                            .outcomes
-                                            .first()
-                                            .map(|s| render::truncate(s, 8))
-                                            .unwrap_or_else(|| "Yes".to_string());
-                                        let outcome_1 = market
-                                            .outcomes
-                                            .get(1)
-                                            .map(|s| render::truncate(s, 8))
-                                            .unwrap_or_else(|| "No".to_string());
-
-                                        // Button format: "[{outcome} XX¢]"
-                                        let yes_button =
-                                            format!("[{} {}]", outcome_0, yes_price_str);
-                                        let no_button = format!("[{} {}]", outcome_1, no_price_str);
-                                        let yes_button_width = yes_button.len() as u16;
-                                        let no_button_width = no_button.len() as u16;
-
-                                        // Buttons are at the right edge of the panel
-                                        // No button is at the far right
+                                        // Buttons are at the right edge of the panel with fixed widths
+                                        // Layout: ... [Yes button 17] [No button 17]
                                         let no_button_start =
-                                            panel_width.saturating_sub(no_button_width);
-                                        // Yes button is before No button with 1 space
+                                            panel_width.saturating_sub(BUTTON_COL_WIDTH);
                                         let yes_button_start = no_button_start
                                             .saturating_sub(1)
-                                            .saturating_sub(yes_button_width);
+                                            .saturating_sub(BUTTON_COL_WIDTH);
 
                                         if click_x >= no_button_start {
                                             // Clicked on No button
