@@ -252,6 +252,17 @@ impl MarketEventRef {
 pub struct GammaClient {
     client: reqwest::Client,
     cache: Option<FileCache>,
+    /// Authentication credentials (for favorite events, etc.)
+    auth: Option<GammaAuth>,
+}
+
+/// Authentication credentials for Gamma API
+#[derive(Debug, Clone)]
+pub struct GammaAuth {
+    pub api_key: String,
+    pub api_secret: String,
+    pub passphrase: String,
+    pub address: String,
 }
 
 impl GammaClient {
@@ -259,7 +270,27 @@ impl GammaClient {
         Self {
             client: reqwest::Client::new(),
             cache: None,
+            auth: None,
         }
+    }
+
+    /// Create a new GammaClient with authentication
+    pub fn with_auth(auth: GammaAuth) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            cache: None,
+            auth: Some(auth),
+        }
+    }
+
+    /// Set authentication credentials
+    pub fn set_auth(&mut self, auth: GammaAuth) {
+        self.auth = Some(auth);
+    }
+
+    /// Check if the client has authentication credentials
+    pub fn has_auth(&self) -> bool {
+        self.auth.is_some()
     }
 
     /// Create a new GammaClient with file-based caching
@@ -268,6 +299,7 @@ impl GammaClient {
         Ok(Self {
             client: reqwest::Client::new(),
             cache: Some(cache),
+            auth: None,
         })
     }
 
@@ -674,6 +706,153 @@ impl GammaClient {
         let tags: Vec<Tag> = self.client.get(&url).send().await?.json().await?;
         Ok(tags)
     }
+
+    /// Create L2 authentication headers for a request
+    /// This uses the same HMAC-based authentication as the CLOB API
+    fn create_auth_headers(
+        &self,
+        method: &str,
+        request_path: &str,
+        body: Option<&str>,
+    ) -> Result<reqwest::header::HeaderMap> {
+        use crate::clob::L2Headers;
+
+        let auth = self.auth.as_ref().ok_or_else(|| {
+            crate::error::PolymarketError::InvalidData("No auth credentials configured".to_string())
+        })?;
+
+        // Use the same L2Headers implementation as CLOB API
+        let l2_headers = L2Headers::new(
+            &auth.api_key,
+            &auth.api_secret,
+            &auth.passphrase,
+            &auth.address,
+            method,
+            request_path,
+            body,
+        )
+        .map_err(crate::error::PolymarketError::InvalidData)?;
+
+        Ok(l2_headers.to_header_map())
+    }
+
+    /// Get all favorite events for the authenticated user
+    pub async fn get_favorite_events(&self) -> Result<Vec<FavoriteEvent>> {
+        if !self.has_auth() {
+            return Err(crate::error::PolymarketError::InvalidData(
+                "Authentication required for favorite events".to_string(),
+            ));
+        }
+
+        let url = format!("{}/favorite_events", GAMMA_API_BASE);
+        let request_path = "/favorite_events";
+
+        let headers = self.create_auth_headers("GET", request_path, None)?;
+
+        let response = self.client.get(&url).headers(headers).send().await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            log_warn!("Failed to get favorite events: {} - {}", status, body);
+            return Err(crate::error::PolymarketError::InvalidData(format!(
+                "Failed to get favorite events: {}",
+                status
+            )));
+        }
+
+        let favorites: Vec<FavoriteEvent> = response.json().await?;
+        log_info!("Fetched {} favorite events", favorites.len());
+        Ok(favorites)
+    }
+
+    /// Add an event to favorites
+    pub async fn add_favorite_event(&self, event_id: &str) -> Result<FavoriteEvent> {
+        if !self.has_auth() {
+            return Err(crate::error::PolymarketError::InvalidData(
+                "Authentication required for favorite events".to_string(),
+            ));
+        }
+
+        let url = format!("{}/favorite_events", GAMMA_API_BASE);
+        let request_path = "/favorite_events";
+
+        let body = serde_json::to_string(&AddFavoriteRequest {
+            event_id: event_id.to_string(),
+        })?;
+
+        let headers = self.create_auth_headers("POST", request_path, Some(&body))?;
+
+        let response = self
+            .client
+            .post(&url)
+            .headers(headers)
+            .header("Content-Type", "application/json")
+            .body(body)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            log_warn!("Failed to add favorite event: {} - {}", status, body);
+            return Err(crate::error::PolymarketError::InvalidData(format!(
+                "Failed to add favorite event: {}",
+                status
+            )));
+        }
+
+        let favorite: FavoriteEvent = response.json().await?;
+        log_info!("Added favorite event: {}", event_id);
+        Ok(favorite)
+    }
+
+    /// Remove an event from favorites
+    pub async fn remove_favorite_event(&self, favorite_id: i64) -> Result<()> {
+        if !self.has_auth() {
+            return Err(crate::error::PolymarketError::InvalidData(
+                "Authentication required for favorite events".to_string(),
+            ));
+        }
+
+        let url = format!("{}/favorite_events/{}", GAMMA_API_BASE, favorite_id);
+        let request_path = format!("/favorite_events/{}", favorite_id);
+
+        let headers = self.create_auth_headers("DELETE", &request_path, None)?;
+
+        let response = self.client.delete(&url).headers(headers).send().await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            log_warn!("Failed to remove favorite event: {} - {}", status, body);
+            return Err(crate::error::PolymarketError::InvalidData(format!(
+                "Failed to remove favorite event: {}",
+                status
+            )));
+        }
+
+        log_info!("Removed favorite event: {}", favorite_id);
+        Ok(())
+    }
+
+    /// Check if an event is in favorites (returns the favorite entry if found)
+    pub async fn is_favorite_event(&self, event_id: &str) -> Result<Option<FavoriteEvent>> {
+        let favorites = self.get_favorite_events().await?;
+        Ok(favorites.into_iter().find(|f| f.event_id == event_id))
+    }
+
+    /// Toggle favorite status for an event
+    /// Returns true if the event is now a favorite, false if it was removed
+    pub async fn toggle_favorite_event(&self, event_id: &str) -> Result<bool> {
+        if let Some(favorite) = self.is_favorite_event(event_id).await? {
+            self.remove_favorite_event(favorite.id).await?;
+            Ok(false)
+        } else {
+            self.add_favorite_event(event_id).await?;
+            Ok(true)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -720,6 +899,28 @@ pub struct PublicProfile {
     pub profile_image: Option<String>,
     #[serde(rename = "profileImageOptimized", default)]
     pub profile_image_optimized: Option<String>,
+}
+
+/// Favorite event entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FavoriteEvent {
+    /// Favorite entry ID (used for deletion)
+    pub id: i64,
+    /// Event ID
+    #[serde(rename = "eventId")]
+    pub event_id: String,
+    /// User address
+    #[serde(default)]
+    pub address: Option<String>,
+    /// Creation timestamp
+    #[serde(rename = "createdAt", default)]
+    pub created_at: Option<String>,
+}
+
+/// Request body for adding a favorite event
+#[derive(Debug, Clone, Serialize)]
+struct AddFavoriteRequest {
+    event_id: String,
 }
 
 impl Default for GammaClient {

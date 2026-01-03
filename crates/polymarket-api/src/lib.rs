@@ -13,7 +13,7 @@ pub use {
     data::DataClient,
     display::{MarketUpdateFormatter, RTDSFormatter},
     error::{PolymarketError, Result, lock_mutex},
-    gamma::GammaClient,
+    gamma::{FavoriteEvent, GammaAuth, GammaClient},
     rtds::{ActivityPayload, RTDSClient, RTDSMessage},
     websocket::PolymarketWebSocket,
 };

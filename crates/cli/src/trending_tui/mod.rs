@@ -293,6 +293,53 @@ fn spawn_filter_fetch(
     });
 }
 
+/// Spawn async task to fetch user profile by address and update auth state
+fn spawn_fetch_user_profile(app_state: Arc<TokioMutex<TrendingAppState>>, address: String) {
+    let gamma_client = GammaClient::new();
+
+    tokio::spawn(async move {
+        match gamma_client.get_public_profile(&address).await {
+            Ok(Some(profile)) => {
+                // Prefer name, fall back to pseudonym for display
+                let username = profile
+                    .name
+                    .clone()
+                    .filter(|n| !n.is_empty())
+                    .or_else(|| profile.pseudonym.clone().filter(|p| !p.is_empty()));
+
+                log_info!(
+                    "Fetched profile for {}: {:?}",
+                    address,
+                    username.as_deref().unwrap_or("(no name)")
+                );
+
+                let mut app = app_state.lock().await;
+                app.auth_state.username = username.clone();
+
+                // Store full profile info
+                app.auth_state.profile = Some(state::UserProfile {
+                    name: profile.name,
+                    pseudonym: profile.pseudonym,
+                    bio: profile.bio,
+                    profile_image: profile.profile_image,
+                });
+
+                // Also update saved auth config with username
+                if let Some(mut config) = crate::auth::AuthConfig::load() {
+                    config.username = username;
+                    let _ = config.save();
+                }
+            },
+            Ok(None) => {
+                log_debug!("No profile found for address {}", address);
+            },
+            Err(e) => {
+                log_debug!("Failed to fetch profile for {}: {}", address, e);
+            },
+        }
+    });
+}
+
 /// Fetch trade count for an event's markets using authenticated CLOB API
 /// Returns total number of trades across all markets in the event
 async fn fetch_event_trade_count(
@@ -518,6 +565,90 @@ fn spawn_yield_fetch(app_state: Arc<TokioMutex<TrendingAppState>>) {
     });
 }
 
+/// Spawn async task to fetch favorite events
+fn spawn_fetch_favorites(app_state: Arc<TokioMutex<TrendingAppState>>) {
+    use polymarket_api::{GammaAuth, GammaClient};
+
+    tokio::spawn(async move {
+        // Set loading state
+        {
+            let mut app = app_state.lock().await;
+            app.favorites_state.is_loading = true;
+            app.favorites_state.error_message = None;
+        }
+
+        // Load auth config
+        let auth_config = match crate::auth::AuthConfig::load() {
+            Some(config) => config,
+            None => {
+                let mut app = app_state.lock().await;
+                app.favorites_state.is_loading = false;
+                app.favorites_state.error_message = Some("No auth credentials found".to_string());
+                return;
+            },
+        };
+
+        // Create authenticated gamma client
+        let gamma_auth = GammaAuth {
+            api_key: auth_config.api_key,
+            api_secret: auth_config.secret,
+            passphrase: auth_config.passphrase,
+            address: auth_config.address,
+        };
+        let gamma_client = GammaClient::with_auth(gamma_auth);
+
+        log_info!("Fetching favorite events...");
+
+        // Fetch favorite event IDs
+        let favorites = match gamma_client.get_favorite_events().await {
+            Ok(favs) => favs,
+            Err(e) => {
+                log_error!("Failed to fetch favorites: {}", e);
+                let mut app = app_state.lock().await;
+                app.favorites_state.is_loading = false;
+                app.favorites_state.error_message = Some(format!("Failed to fetch: {}", e));
+                return;
+            },
+        };
+
+        log_info!("Found {} favorite event IDs", favorites.len());
+
+        if favorites.is_empty() {
+            let mut app = app_state.lock().await;
+            app.favorites_state.is_loading = false;
+            app.favorites_state.events.clear();
+            app.favorites_state.favorite_ids = favorites;
+            return;
+        }
+
+        // Fetch actual event data for each favorite
+        let mut events = Vec::new();
+        for fav in &favorites {
+            match gamma_client.get_event_by_id(&fav.event_id).await {
+                Ok(Some(event)) => {
+                    events.push(event);
+                },
+                Ok(None) => {
+                    log_warn!("Favorite event {} not found", fav.event_id);
+                },
+                Err(e) => {
+                    log_warn!("Failed to fetch event {}: {}", fav.event_id, e);
+                },
+            }
+        }
+
+        log_info!("Loaded {} favorite events", events.len());
+
+        // Update state
+        let mut app = app_state.lock().await;
+        app.favorites_state.events = events;
+        app.favorites_state.favorite_ids = favorites;
+        app.favorites_state.is_loading = false;
+        app.favorites_state.selected_index = 0;
+        app.favorites_state.scroll = 0;
+    });
+}
+
 /// Spawn async task to search events and calculate yield for each
 fn spawn_yield_search(app_state: Arc<TokioMutex<TrendingAppState>>, query: String) {
     use polymarket_api::GammaClient;
@@ -683,13 +814,22 @@ pub async fn run_trending_tui(
 
     // Load saved auth config on startup
     if let Some(auth_config) = crate::auth::AuthConfig::load() {
-        let mut app = app_state.lock().await;
-        let short_addr = auth_config.short_address();
-        app.auth_state.is_authenticated = true;
-        app.auth_state.address = Some(auth_config.address);
-        app.auth_state.username = auth_config.username;
-        app.has_clob_auth = true;
-        log_info!("Loaded saved auth config for {}", short_addr);
+        let address = auth_config.address.clone();
+        let has_username = auth_config.username.is_some();
+        {
+            let mut app = app_state.lock().await;
+            let short_addr = auth_config.short_address();
+            app.auth_state.is_authenticated = true;
+            app.auth_state.address = Some(auth_config.address);
+            app.auth_state.username = auth_config.username;
+            app.has_clob_auth = true;
+            log_info!("Loaded saved auth config for {}", short_addr);
+        }
+
+        // If no username saved, fetch profile from API
+        if !has_username {
+            spawn_fetch_user_profile(Arc::clone(&app_state), address);
+        }
     }
 
     // Fetch trade counts for the initially selected event (if authenticated)
@@ -899,7 +1039,7 @@ pub async fn run_trending_tui(
                     let size = Rect::new(0, 0, term_size.width, term_size.height);
 
                     // Check for login button click (top right)
-                    if render::is_login_button_clicked(mouse.column, mouse.row, size) {
+                    if render::is_login_button_clicked(mouse.column, mouse.row, size, &app) {
                         if app.auth_state.is_authenticated {
                             app.show_popup(PopupType::UserProfile);
                         } else {
@@ -910,7 +1050,7 @@ pub async fn run_trending_tui(
 
                     // Check for tab clicks (first line - unified tabs)
                     if let Some(clicked_tab) =
-                        render::get_clicked_tab(mouse.column, mouse.row, size)
+                        render::get_clicked_tab(mouse.column, mouse.row, size, &app)
                     {
                         match clicked_tab {
                             ClickedTab::Trending => {
@@ -949,6 +1089,19 @@ pub async fn run_trending_tui(
                                     {
                                         drop(app);
                                         spawn_filter_fetch(Arc::clone(&app_state), order_by, limit);
+                                    }
+                                }
+                            },
+                            ClickedTab::Favorites => {
+                                if app.main_tab != MainTab::Favorites {
+                                    app.main_tab = MainTab::Favorites;
+                                    // If switching to Favorites tab and no data loaded, fetch it
+                                    if app.favorites_state.events.is_empty()
+                                        && !app.favorites_state.is_loading
+                                        && app.auth_state.is_authenticated
+                                    {
+                                        drop(app);
+                                        spawn_fetch_favorites(Arc::clone(&app_state));
                                     }
                                 }
                             },
@@ -1082,6 +1235,78 @@ pub async fn run_trending_tui(
                                         }
                                     }
                                 }
+                            }
+                        }
+                        // Handle click on Markets panel to open trade popup
+                        if panel == FocusedPanel::Markets && app.main_tab == MainTab::Trending {
+                            // Extract trade popup data before mutably borrowing app
+                            let trade_data: Option<(String, String, String, f64)> =
+                                if let Some(event) = app.selected_event() {
+                                    // Calculate which market row was clicked
+                                    let (_, _, _, markets_area, ..) = calculate_panel_areas(
+                                        size,
+                                        app.is_in_filter_mode(),
+                                        app.show_logs,
+                                        app.main_tab,
+                                    );
+                                    // Account for border (1 line at top)
+                                    let relative_y =
+                                        mouse.row.saturating_sub(markets_area.y + 1) as usize;
+                                    let clicked_idx = app.scroll.markets + relative_y;
+
+                                    // Sort markets same way as render_markets (non-closed first)
+                                    let mut sorted_markets: Vec<_> = event.markets.iter().collect();
+                                    sorted_markets.sort_by_key(|m| m.closed);
+
+                                    if clicked_idx < sorted_markets.len() {
+                                        let market = sorted_markets[clicked_idx];
+                                        // Only allow trading on non-closed markets
+                                        if !market.closed {
+                                            // Get the first outcome's token_id and price
+                                            if let Some(ref token_ids) = market.clob_token_ids {
+                                                if let Some(token_id) = token_ids.first() {
+                                                    let outcome = market
+                                                        .outcomes
+                                                        .first()
+                                                        .cloned()
+                                                        .unwrap_or_else(|| "Yes".to_string());
+                                                    let price = app
+                                                        .market_prices
+                                                        .get(token_id)
+                                                        .copied()
+                                                        .or_else(|| {
+                                                            market
+                                                                .outcome_prices
+                                                                .first()
+                                                                .and_then(|p| p.parse::<f64>().ok())
+                                                        })
+                                                        .unwrap_or(0.5);
+                                                    Some((
+                                                        token_id.clone(),
+                                                        market.question.clone(),
+                                                        outcome,
+                                                        price,
+                                                    ))
+                                                } else {
+                                                    None
+                                                }
+                                            } else {
+                                                None
+                                            }
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                };
+
+                            // Now mutably borrow app to open the trade popup
+                            if let Some((token_id, question, outcome, price)) = trade_data {
+                                app.open_trade_popup(token_id, question.clone(), outcome, price);
+                                log_info!("Opening trade popup for: {}", question);
                             }
                         }
                     }
@@ -1306,6 +1531,7 @@ pub async fn run_trending_tui(
                                     match config.save() {
                                         Ok(()) => {
                                             // Update auth state
+                                            let address_for_profile = config.address.clone();
                                             app.auth_state.is_authenticated = true;
                                             app.auth_state.address = Some(config.address.clone());
                                             app.auth_state.username = config.username.clone();
@@ -1313,6 +1539,13 @@ pub async fn run_trending_tui(
                                             app.login_form.clear();
                                             app.close_popup();
                                             log_info!("Logged in successfully");
+
+                                            // Fetch user profile to get username
+                                            drop(app); // Release lock before spawning
+                                            spawn_fetch_user_profile(
+                                                Arc::clone(&app_state),
+                                                address_for_profile,
+                                            );
                                         },
                                         Err(e) => {
                                             app.login_form.error_message = Some(e);
@@ -1350,6 +1583,69 @@ pub async fn run_trending_tui(
                             log_info!("Logged out");
                         },
                         _ => {},
+                    }
+                    continue;
+                }
+
+                // Handle Trade popup input
+                if matches!(app.popup, Some(PopupType::Trade)) {
+                    // Check auth state before borrowing trade_form mutably
+                    let is_authenticated = app.auth_state.is_authenticated;
+                    let mut should_close = false;
+
+                    if let Some(ref mut form) = app.trade_form {
+                        match key.code {
+                            KeyCode::Esc => {
+                                should_close = true;
+                            },
+                            KeyCode::Tab => {
+                                form.active_field = form.active_field.next();
+                            },
+                            KeyCode::BackTab => {
+                                form.active_field = form.active_field.prev();
+                            },
+                            KeyCode::Char(' ') => {
+                                // Space toggles buy/sell side
+                                form.toggle_side();
+                            },
+                            KeyCode::Backspace => {
+                                form.delete_char();
+                            },
+                            KeyCode::Enter => {
+                                // Validate and submit trade
+                                if !is_authenticated {
+                                    form.error_message =
+                                        Some("Login required to trade".to_string());
+                                } else if form.amount.is_empty() || form.amount_f64() <= 0.0 {
+                                    form.error_message =
+                                        Some("Please enter a valid amount".to_string());
+                                } else {
+                                    // TODO: Actually submit the trade via CLOB API
+                                    log_info!(
+                                        "Trade submitted: {} ${} of {} at {:.0}¢",
+                                        form.side.label(),
+                                        form.amount,
+                                        form.outcome,
+                                        form.price * 100.0
+                                    );
+                                    form.error_message =
+                                        Some("Trade submission not yet implemented".to_string());
+                                    // For now, just close
+                                    // should_close = true;
+                                }
+                            },
+                            KeyCode::Char(c) => {
+                                form.add_char(c);
+                            },
+                            _ => {},
+                        }
+                    } else {
+                        // No form state, close popup
+                        should_close = true;
+                    }
+
+                    if should_close {
+                        app.close_popup();
                     }
                     continue;
                 }
@@ -1426,12 +1722,37 @@ pub async fn run_trending_tui(
                         }
                     },
                     KeyCode::Char('2') => {
-                        // Switch to Breaking tab (unless in search/filter mode)
+                        // Switch to Favorites tab (unless in search/filter mode)
                         if app.main_tab == MainTab::Yield && app.yield_state.is_searching {
                             app.yield_state.add_search_char('2');
                             yield_search_debounce = Some(tokio::time::Instant::now());
                         } else if app.main_tab == MainTab::Yield && app.yield_state.is_filtering {
                             app.yield_state.add_filter_char('2');
+                        } else if !app.is_in_filter_mode() && app.main_tab != MainTab::Favorites {
+                            app.main_tab = MainTab::Favorites;
+                            // Fetch favorites if not already loaded
+                            if app.favorites_state.events.is_empty()
+                                && !app.favorites_state.is_loading
+                                && app.auth_state.is_authenticated
+                            {
+                                drop(app);
+                                spawn_fetch_favorites(Arc::clone(&app_state));
+                            }
+                            log_info!("Switched to Favorites tab");
+                        } else if app.is_in_filter_mode() {
+                            app.add_search_char('2');
+                            if app.search.mode == SearchMode::ApiSearch {
+                                search_debounce = Some(tokio::time::Instant::now());
+                            }
+                        }
+                    },
+                    KeyCode::Char('3') => {
+                        // Switch to Breaking tab (unless in search/filter mode)
+                        if app.main_tab == MainTab::Yield && app.yield_state.is_searching {
+                            app.yield_state.add_search_char('3');
+                            yield_search_debounce = Some(tokio::time::Instant::now());
+                        } else if app.main_tab == MainTab::Yield && app.yield_state.is_filtering {
+                            app.yield_state.add_filter_char('3');
                         } else if !app.is_in_filter_mode() {
                             if app.main_tab != MainTab::Trending
                                 || app.event_filter != EventFilter::Breaking
@@ -1446,19 +1767,19 @@ pub async fn run_trending_tui(
                                 log_info!("Switched to Breaking tab");
                             }
                         } else if app.is_in_filter_mode() {
-                            app.add_search_char('2');
+                            app.add_search_char('3');
                             if app.search.mode == SearchMode::ApiSearch {
                                 search_debounce = Some(tokio::time::Instant::now());
                             }
                         }
                     },
-                    KeyCode::Char('3') => {
+                    KeyCode::Char('4') => {
                         // Switch to New tab (unless in search/filter mode)
                         if app.main_tab == MainTab::Yield && app.yield_state.is_searching {
-                            app.yield_state.add_search_char('3');
+                            app.yield_state.add_search_char('4');
                             yield_search_debounce = Some(tokio::time::Instant::now());
                         } else if app.main_tab == MainTab::Yield && app.yield_state.is_filtering {
-                            app.yield_state.add_filter_char('3');
+                            app.yield_state.add_filter_char('4');
                         } else if !app.is_in_filter_mode() {
                             if app.main_tab != MainTab::Trending
                                 || app.event_filter != EventFilter::New
@@ -1473,19 +1794,19 @@ pub async fn run_trending_tui(
                                 log_info!("Switched to New tab");
                             }
                         } else if app.is_in_filter_mode() {
-                            app.add_search_char('3');
+                            app.add_search_char('4');
                             if app.search.mode == SearchMode::ApiSearch {
                                 search_debounce = Some(tokio::time::Instant::now());
                             }
                         }
                     },
-                    KeyCode::Char('4') => {
+                    KeyCode::Char('5') => {
                         // Switch to Yield tab (unless in search/filter mode)
                         if app.main_tab == MainTab::Yield && app.yield_state.is_searching {
-                            app.yield_state.add_search_char('4');
+                            app.yield_state.add_search_char('5');
                             yield_search_debounce = Some(tokio::time::Instant::now());
                         } else if app.main_tab == MainTab::Yield && app.yield_state.is_filtering {
-                            app.yield_state.add_filter_char('4');
+                            app.yield_state.add_filter_char('5');
                         } else if !app.is_in_filter_mode() && app.main_tab != MainTab::Yield {
                             app.main_tab = MainTab::Yield;
                             // Fetch yield data if not already loaded
@@ -1497,7 +1818,7 @@ pub async fn run_trending_tui(
                             }
                             log_info!("Switched to Yield tab");
                         } else if app.is_in_filter_mode() {
-                            app.add_search_char('4');
+                            app.add_search_char('5');
                             if app.search.mode == SearchMode::ApiSearch {
                                 search_debounce = Some(tokio::time::Instant::now());
                             }
@@ -1738,7 +2059,7 @@ pub async fn run_trending_tui(
                         if !app.is_in_filter_mode()
                             && app.navigation.focused_panel == FocusedPanel::Header
                         {
-                            // Cycle through all tabs: Yield -> New -> Breaking -> Trending -> Yield
+                            // Cycle through all tabs: Yield -> New -> Breaking -> Favorites -> Trending -> Yield
                             match app.main_tab {
                                 MainTab::Trending => {
                                     match app.event_filter {
@@ -1750,6 +2071,17 @@ pub async fn run_trending_tui(
                                             {
                                                 drop(app);
                                                 spawn_yield_fetch(Arc::clone(&app_state));
+                                            }
+                                        },
+                                        EventFilter::Breaking => {
+                                            // Go to Favorites tab
+                                            app.main_tab = MainTab::Favorites;
+                                            if app.favorites_state.events.is_empty()
+                                                && !app.favorites_state.is_loading
+                                                && app.auth_state.is_authenticated
+                                            {
+                                                drop(app);
+                                                spawn_fetch_favorites(Arc::clone(&app_state));
                                             }
                                         },
                                         _ => {
@@ -1765,6 +2097,16 @@ pub async fn run_trending_tui(
                                                 );
                                             }
                                         },
+                                    }
+                                },
+                                MainTab::Favorites => {
+                                    // Go to Trending tab
+                                    app.main_tab = MainTab::Trending;
+                                    if let Some((order_by, limit)) =
+                                        switch_filter_tab(&mut app, EventFilter::Trending)
+                                    {
+                                        drop(app);
+                                        spawn_filter_fetch(Arc::clone(&app_state), order_by, limit);
                                     }
                                 },
                                 MainTab::Yield => {
@@ -1784,10 +2126,21 @@ pub async fn run_trending_tui(
                         if !app.is_in_filter_mode()
                             && app.navigation.focused_panel == FocusedPanel::Header
                         {
-                            // Cycle through all tabs: Trending -> Breaking -> New -> Yield -> Trending
+                            // Cycle through all tabs: Trending -> Favorites -> Breaking -> New -> Yield -> Trending
                             match app.main_tab {
                                 MainTab::Trending => {
                                     match app.event_filter {
+                                        EventFilter::Trending => {
+                                            // Go to Favorites tab
+                                            app.main_tab = MainTab::Favorites;
+                                            if app.favorites_state.events.is_empty()
+                                                && !app.favorites_state.is_loading
+                                                && app.auth_state.is_authenticated
+                                            {
+                                                drop(app);
+                                                spawn_fetch_favorites(Arc::clone(&app_state));
+                                            }
+                                        },
                                         EventFilter::New => {
                                             // Go to Yield tab
                                             app.main_tab = MainTab::Yield;
@@ -1813,6 +2166,16 @@ pub async fn run_trending_tui(
                                         },
                                     }
                                 },
+                                MainTab::Favorites => {
+                                    // Go to Breaking tab
+                                    app.main_tab = MainTab::Trending;
+                                    if let Some((order_by, limit)) =
+                                        switch_filter_tab(&mut app, EventFilter::Breaking)
+                                    {
+                                        drop(app);
+                                        spawn_filter_fetch(Arc::clone(&app_state), order_by, limit);
+                                    }
+                                },
                                 MainTab::Yield => {
                                     // Wrap to Trending tab
                                     app.main_tab = MainTab::Trending;
@@ -1828,6 +2191,11 @@ pub async fn run_trending_tui(
                     },
                     KeyCode::Up => {
                         if !app.is_in_filter_mode() {
+                            // Handle favorites tab navigation
+                            if app.main_tab == MainTab::Favorites {
+                                app.favorites_state.move_up();
+                                continue;
+                            }
                             // Handle yield tab navigation
                             if app.main_tab == MainTab::Yield {
                                 app.yield_state.move_up();
@@ -1932,6 +2300,12 @@ pub async fn run_trending_tui(
                     },
                     KeyCode::Down => {
                         if !app.is_in_filter_mode() {
+                            // Handle favorites tab navigation
+                            if app.main_tab == MainTab::Favorites {
+                                let visible_height = 20; // Approximate visible rows
+                                app.favorites_state.move_down(visible_height);
+                                continue;
+                            }
                             // Handle yield tab navigation
                             if app.main_tab == MainTab::Yield {
                                 // Calculate visible height (approximate)

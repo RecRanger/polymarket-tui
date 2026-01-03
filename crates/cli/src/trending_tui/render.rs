@@ -9,7 +9,6 @@ use {
     ratatui::{
         Frame,
         layout::{Alignment, Constraint, Direction, Layout, Rect},
-        prelude::Stylize,
         style::{Color, Modifier, Style},
         text::{Line, Span},
         widgets::{
@@ -24,51 +23,140 @@ use {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClickedTab {
     Trending,
+    Favorites,
     Breaking,
     New,
     Yield,
 }
 
-/// Check if a click is on a tab (unified single line of tabs)
-/// Check if the login button was clicked (top right, "[ Login ]" = 10 chars)
+/// Render a search/filter input field with proper styling
+/// Returns the cursor position if the field should show a cursor
+fn render_search_input(
+    f: &mut Frame,
+    area: Rect,
+    query: &str,
+    title: &str,
+    placeholder: &str,
+    is_loading: bool,
+    border_color: Color,
+) {
+    use ratatui::layout::Position;
+
+    // Calculate inner area for the input text
+    let inner_x = area.x + 1;
+    let inner_y = area.y + 1;
+    let inner_width = area.width.saturating_sub(2);
+
+    // Render the block/border
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .title(title)
+        .border_style(Style::default().fg(border_color));
+    f.render_widget(block, area);
+
+    // Input field area with background
+    let input_area = Rect {
+        x: inner_x,
+        y: inner_y,
+        width: inner_width,
+        height: 1,
+    };
+
+    // Determine display text
+    let (display_text, text_style) = if query.is_empty() {
+        // Show placeholder with dark background
+        (
+            placeholder.to_string(),
+            Style::default().fg(Color::DarkGray),
+        )
+    } else if is_loading {
+        // Show query with loading indicator
+        (
+            format!("{} (searching...)", query),
+            Style::default().fg(Color::Cyan).bold(),
+        )
+    } else {
+        // Show query
+        (query.to_string(), Style::default().fg(Color::White).bold())
+    };
+
+    // Pad to fill the field width (creates visible input area with background)
+    let padded_text = format!("{:<width$}", display_text, width = inner_width as usize);
+
+    // Use background color to make input field visible
+    let input_para = Paragraph::new(padded_text).style(text_style.bg(Color::Rgb(40, 40, 40)));
+    f.render_widget(input_para, input_area);
+
+    // Set cursor position at end of query text
+    if !query.is_empty() || is_loading {
+        // Don't show cursor when loading
+        if !is_loading {
+            let cursor_x = inner_x + query.len().min(inner_width as usize - 1) as u16;
+            f.set_cursor_position(Position::new(cursor_x, inner_y));
+        }
+    } else {
+        // Show cursor at start for empty field
+        f.set_cursor_position(Position::new(inner_x, inner_y));
+    }
+}
+
+/// Check if the login button was clicked (top right)
 /// Returns true if click is on the login button area
-pub fn is_login_button_clicked(x: u16, y: u16, size: Rect) -> bool {
+pub fn is_login_button_clicked(x: u16, y: u16, size: Rect, app: &TrendingAppState) -> bool {
     // Login button is on the first line (y = 0) and at the right edge
-    // "[ Login ]" is 10 characters wide
     if y != 0 {
         return false;
     }
 
-    let login_button_start = size.width.saturating_sub(10);
+    // Calculate button width dynamically based on auth state
+    let button_width = if app.auth_state.is_authenticated {
+        let name = app.auth_state.display_name();
+        (name.len() + 4) as u16 // "[ " + name + " ]"
+    } else {
+        10 // "[ Login ]"
+    };
+
+    let login_button_start = size.width.saturating_sub(button_width);
     x >= login_button_start
 }
 
 /// Tabs are rendered on the first line (y = 0)
 /// Returns which tab was clicked: Trending [1], Breaking [2], New [3], Yield [4]
-pub fn get_clicked_tab(x: u16, y: u16, size: Rect) -> Option<ClickedTab> {
+pub fn get_clicked_tab(x: u16, y: u16, size: Rect, app: &TrendingAppState) -> Option<ClickedTab> {
     // Tabs are on the first line (y = 0)
     if y != 0 {
         return None;
     }
 
     // Don't match tabs if clicking on login button area (right side)
-    let login_button_start = size.width.saturating_sub(10);
+    // Calculate button width dynamically based on auth state
+    let button_width = if app.auth_state.is_authenticated {
+        let name = app.auth_state.display_name();
+        (name.len() + 4) as u16 // "[ " + name + " ]"
+    } else {
+        10 // "[ Login ]"
+    };
+    let login_button_start = size.width.saturating_sub(button_width);
     if x >= login_button_start {
         return None;
     }
 
-    // Actual rendered output (Tabs widget adds leading space and "   " divider):
-    // " Trending [1]   Breaking [2]   New [3]   Yield [4]"
-    // 01234567890123456789012345678901234567890123456789
-    //  Trending [1]   Breaking [2]   New [3]   Yield [4]
-    // Positions: 1-12 = Trending, 16-27 = Breaking, 31-36 = New, 40-48 = Yield
+    // Actual rendered output (Tabs widget adds leading space and " " divider):
+    // " Trending [1] Favorites [2] Breaking [3] New [4] Yield [5]"
+    // 0         1         2         3         4         5         6
+    // 0123456789012345678901234567890123456789012345678901234567890
+    //  Trending [1] Favorites [2] Breaking [3] New [4] Yield [5]
+    // Positions: 1-12 = Trending, 14-27 = Favorites, 29-41 = Breaking, 43-50 = New, 52-61 = Yield
     if x <= 12 {
         return Some(ClickedTab::Trending);
-    } else if (16..28).contains(&x) {
+    } else if (14..28).contains(&x) {
+        return Some(ClickedTab::Favorites);
+    } else if (29..42).contains(&x) {
         return Some(ClickedTab::Breaking);
-    } else if (31..37).contains(&x) {
+    } else if (43..51).contains(&x) {
         return Some(ClickedTab::New);
-    } else if (40..50).contains(&x) {
+    } else if (52..62).contains(&x) {
         return Some(ClickedTab::Yield);
     }
     None
@@ -159,6 +247,9 @@ pub fn render(f: &mut Frame, app: &mut TrendingAppState) {
             render_events_list(f, app, main_chunks[0]);
             render_trades(f, app, main_chunks[1]);
         },
+        MainTab::Favorites => {
+            render_favorites_tab(f, app, chunks[1]);
+        },
         MainTab::Yield => {
             render_yield_tab(f, app, chunks[1]);
         },
@@ -208,14 +299,15 @@ pub fn render(f: &mut Frame, app: &mut TrendingAppState) {
 }
 
 fn render_header(f: &mut Frame, app: &TrendingAppState, area: Rect) {
-    // Calculate unified tab index: 0=Trending, 1=Breaking, 2=New, 3=Yield
+    // Calculate unified tab index: 0=Trending, 1=Favorites, 2=Breaking, 3=New, 4=Yield
     let tab_index = match app.main_tab {
         MainTab::Trending => match app.event_filter {
             EventFilter::Trending => 0,
-            EventFilter::Breaking => 1,
-            EventFilter::New => 2,
+            EventFilter::Breaking => 2,
+            EventFilter::New => 3,
         },
-        MainTab::Yield => 3,
+        MainTab::Favorites => 1,
+        MainTab::Yield => 4,
     };
 
     if app.is_in_filter_mode() {
@@ -232,9 +324,10 @@ fn render_header(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         // Render unified tabs
         let tab_titles: Vec<Line> = vec![
             Line::from("Trending [1]"),
-            Line::from("Breaking [2]"),
-            Line::from("New [3]"),
-            Line::from("Yield [4]"),
+            Line::from("Favorites [2]"),
+            Line::from("Breaking [3]"),
+            Line::from("New [4]"),
+            Line::from("Yield [5]"),
         ];
         let tabs = Tabs::new(tab_titles)
             .select(tab_index)
@@ -253,47 +346,26 @@ fn render_header(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         let separator = Paragraph::new(separator_line).style(Style::default().fg(Color::DarkGray));
         f.render_widget(separator, header_chunks[1]);
 
-        // Search input field
-        let search_line = if app.search.query.is_empty() {
-            let prompt_text = match app.search.mode {
-                SearchMode::ApiSearch => "Type to search via API...",
-                SearchMode::LocalFilter => "Type to filter current list...",
-                SearchMode::None => "Type to search...",
-            };
-            Line::from(prompt_text.fg(Color::DarkGray))
-        } else if app.search.is_searching {
-            Line::from(vec![
-                Span::styled(
-                    app.search.query.clone(),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(" (searching...)", Style::default().fg(Color::Yellow)),
-            ])
-        } else {
-            Line::from(Span::styled(
-                app.search.query.clone(),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ))
+        // Search input field with proper styling
+        let placeholder = match app.search.mode {
+            SearchMode::ApiSearch => "Type to search via API...",
+            SearchMode::LocalFilter => "Type to filter current list...",
+            SearchMode::None => "Type to search...",
         };
-        let search_title = if app.search.is_searching {
+        let title = if app.search.is_searching {
             "Search (loading...)"
         } else {
-            "Search"
+            "Search (Esc to close)"
         };
-        let search_input = Paragraph::new(vec![search_line])
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .title(search_title),
-            )
-            .alignment(Alignment::Left)
-            .wrap(Wrap { trim: true });
-        f.render_widget(search_input, header_chunks[2]);
+        render_search_input(
+            f,
+            header_chunks[2],
+            &app.search.query,
+            title,
+            placeholder,
+            app.search.is_searching,
+            Color::Yellow,
+        );
     } else {
         // Normal mode: Split header into tabs and horizontal line
         let header_chunks = Layout::default()
@@ -304,21 +376,31 @@ fn render_header(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             ])
             .split(area);
 
+        // Determine button text first to calculate width
+        let (button_text, button_style) = if app.auth_state.is_authenticated {
+            let name = app.auth_state.display_name();
+            (format!("[ {} ]", name), Style::default().fg(Color::Green))
+        } else {
+            ("[ Login ]".to_string(), Style::default().fg(Color::Cyan))
+        };
+        let button_width = button_text.len() as u16;
+
         // Split tabs line: tabs on left, login button on right
         let tabs_line_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Min(0),     // Tabs (fill remaining space)
-                Constraint::Length(10), // Login button "[ Login ]"
+                Constraint::Min(0),               // Tabs (fill remaining space)
+                Constraint::Length(button_width), // Login/user button (dynamic width)
             ])
             .split(header_chunks[0]);
 
         // Render unified tabs in gitui-style (underline for selected, keyboard shortcuts)
         let tab_titles: Vec<Line> = vec![
             Line::from("Trending [1]"),
-            Line::from("Breaking [2]"),
-            Line::from("New [3]"),
-            Line::from("Yield [4]"),
+            Line::from("Favorites [2]"),
+            Line::from("Breaking [3]"),
+            Line::from("New [4]"),
+            Line::from("Yield [5]"),
         ];
         let tabs = Tabs::new(tab_titles)
             .select(tab_index)
@@ -332,21 +414,6 @@ fn render_header(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         f.render_widget(tabs, tabs_line_chunks[0]);
 
         // Render login/user button on the right
-        let (button_text, button_style) = if app.auth_state.is_authenticated {
-            let name = app.auth_state.display_name();
-            // Truncate to fit in button area (max ~8 chars to fit in Length(10))
-            let display = if name.len() > 8 {
-                format!("{}...", &name[..5])
-            } else {
-                name
-            };
-            (
-                format!("[ {} ]", display),
-                Style::default().fg(Color::Green),
-            )
-        } else {
-            ("[ Login ]".to_string(), Style::default().fg(Color::Cyan))
-        };
         let login_button = Paragraph::new(button_text)
             .style(button_style)
             .alignment(Alignment::Right);
@@ -358,6 +425,206 @@ fn render_header(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         let separator = Paragraph::new(separator_line).style(Style::default().fg(Color::DarkGray));
         f.render_widget(separator, header_chunks[1]);
     }
+}
+
+/// Render the favorites tab
+fn render_favorites_tab(f: &mut Frame, app: &TrendingAppState, area: Rect) {
+    let favorites_state = &app.favorites_state;
+
+    // Check authentication first
+    if !app.auth_state.is_authenticated {
+        let message = Paragraph::new("Please login to view your favorites.\n\nPress Tab to go to Login button, then Enter to open login dialog.")
+            .block(
+                Block::default()
+                    .title(" Favorites ")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded),
+            )
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::Yellow));
+        f.render_widget(message, area);
+        return;
+    }
+
+    // Show loading state
+    if favorites_state.is_loading {
+        let loading = Paragraph::new("Loading favorites...")
+            .block(
+                Block::default()
+                    .title(" Favorites ")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded),
+            )
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::Yellow));
+        f.render_widget(loading, area);
+        return;
+    }
+
+    // Show error state
+    if let Some(ref error) = favorites_state.error_message {
+        let error_msg = Paragraph::new(format!("Error: {}", error))
+            .block(
+                Block::default()
+                    .title(" Favorites ")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded),
+            )
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::Red));
+        f.render_widget(error_msg, area);
+        return;
+    }
+
+    // Show empty state
+    if favorites_state.events.is_empty() {
+        let empty = Paragraph::new("No favorites yet.\n\nBrowse events in the Trending tab and press 'f' to favorite them.")
+            .block(
+                Block::default()
+                    .title(" Favorites ")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded),
+            )
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::DarkGray));
+        f.render_widget(empty, area);
+        return;
+    }
+
+    // Split into list on left and details on right
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(45), // Favorites list
+            Constraint::Fill(1),        // Details panel
+        ])
+        .split(area);
+
+    render_favorites_list(f, app, chunks[0]);
+    render_favorites_details(f, app, chunks[1]);
+}
+
+fn render_favorites_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
+    let favorites_state = &app.favorites_state;
+
+    let items: Vec<ListItem> = favorites_state
+        .events
+        .iter()
+        .enumerate()
+        .map(|(i, event)| {
+            let is_selected = i == favorites_state.selected_index;
+            let style = if is_selected {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::White)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+
+            // Truncate title if needed
+            let max_width = area.width.saturating_sub(4) as usize;
+            let title = if event.title.len() > max_width {
+                format!("{}...", &event.title[..max_width.saturating_sub(3)])
+            } else {
+                event.title.clone()
+            };
+
+            ListItem::new(title).style(style)
+        })
+        .collect();
+
+    let title = format!(" Favorites ({}) ", favorites_state.events.len());
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(Color::Magenta)),
+        )
+        .highlight_style(
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    let mut list_state = ListState::default();
+    list_state.select(Some(favorites_state.selected_index));
+    f.render_stateful_widget(list, area, &mut list_state);
+}
+
+fn render_favorites_details(f: &mut Frame, app: &TrendingAppState, area: Rect) {
+    let favorites_state = &app.favorites_state;
+
+    let content = if let Some(event) = favorites_state.selected_event() {
+        let mut lines = vec![
+            Line::from(Span::styled(
+                &event.title,
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+        ];
+
+        // Add tags if available
+        if !event.tags.is_empty() {
+            let tag_labels: Vec<&str> = event.tags.iter().map(|t| t.label.as_str()).collect();
+            lines.push(Line::from(Span::styled(
+                format!("Tags: {}", tag_labels.join(", ")),
+                Style::default().fg(Color::DarkGray),
+            )));
+            lines.push(Line::from(""));
+        }
+
+        // Add end date if available
+        if let Some(ref end_date) = event.end_date {
+            lines.push(Line::from(format!("End Date: {}", end_date)));
+            lines.push(Line::from(""));
+        }
+
+        // Add markets info
+        if !event.markets.is_empty() {
+            lines.push(Line::from(Span::styled(
+                format!("Markets ({})", event.markets.len()),
+                Style::default().add_modifier(Modifier::BOLD),
+            )));
+
+            for market in &event.markets {
+                let outcomes: Vec<String> = market
+                    .outcome_prices
+                    .iter()
+                    .zip(market.outcomes.iter())
+                    .map(|(price, outcome)| {
+                        let price_val: f64 = price.parse().unwrap_or(0.0);
+                        format!("{}: {}%", outcome, (price_val * 100.0) as i32)
+                    })
+                    .collect();
+                lines.push(Line::from(format!(
+                    "  {} - {}",
+                    market.question,
+                    outcomes.join(" / ")
+                )));
+            }
+        }
+
+        lines
+    } else {
+        vec![Line::from("No event selected")]
+    };
+
+    let details = Paragraph::new(content)
+        .block(
+            Block::default()
+                .title(" Event Details ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(Color::Magenta)),
+        )
+        .wrap(Wrap { trim: true });
+    f.render_widget(details, area);
 }
 
 /// Render the yield opportunities tab
@@ -374,37 +641,16 @@ fn render_yield_tab(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             ])
             .split(area);
 
-        // Render search input
-        let search_text = if yield_state.search_query.is_empty() {
-            Line::from("Type to search events...".fg(Color::DarkGray))
-        } else if yield_state.is_search_loading {
-            Line::from(vec![
-                Span::styled(
-                    &yield_state.search_query,
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(" (searching...)", Style::default().fg(Color::Yellow)),
-            ])
-        } else {
-            Line::from(Span::styled(
-                &yield_state.search_query,
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ))
-        };
-        let search_input = Paragraph::new(vec![search_text])
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .title("Search (Esc to close)")
-                    .border_style(Style::default().fg(Color::Yellow)),
-            )
-            .alignment(Alignment::Left);
-        f.render_widget(search_input, chunks[0]);
+        // Render search input with proper styling
+        render_search_input(
+            f,
+            chunks[0],
+            &yield_state.search_query,
+            "Search (Esc to close)",
+            "Type to search events...",
+            yield_state.is_search_loading,
+            Color::Yellow,
+        );
 
         // Render main content below search
         let main_chunks = Layout::default()
@@ -433,27 +679,16 @@ fn render_yield_tab(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             ])
             .split(area);
 
-        // Render filter input
-        let filter_text = if yield_state.filter_query.is_empty() {
-            Line::from("Type to filter by event/market name...".fg(Color::DarkGray))
-        } else {
-            Line::from(Span::styled(
-                &yield_state.filter_query,
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ))
-        };
-        let filter_input = Paragraph::new(vec![filter_text])
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .title("Filter (Esc to close, Backspace to clear)")
-                    .border_style(Style::default().fg(Color::Yellow)),
-            )
-            .alignment(Alignment::Left);
-        f.render_widget(filter_input, chunks[0]);
+        // Render filter input with proper styling
+        render_search_input(
+            f,
+            chunks[0],
+            &yield_state.filter_query,
+            "Filter (Esc to close)",
+            "Type to filter by event/market name...",
+            false, // Filter is local, never loading
+            Color::Yellow,
+        );
 
         // Render main content below filter
         let main_chunks = Layout::default()
@@ -1297,8 +1532,8 @@ fn render_popup(f: &mut Frame, app: &TrendingAppState, popup: &PopupType) {
             render_user_profile_popup(f, app);
             return;
         },
-        PopupType::Trade(token_id) => {
-            render_trade_popup(f, app, token_id);
+        PopupType::Trade => {
+            render_trade_popup(f, app);
             return;
         },
         _ => {},
@@ -1362,7 +1597,7 @@ fn render_popup(f: &mut Frame, app: &TrendingAppState, popup: &PopupType) {
             )]),
         ]),
         // These are handled above with early return
-        PopupType::Login | PopupType::UserProfile | PopupType::Trade(_) => unreachable!(),
+        PopupType::Login | PopupType::UserProfile | PopupType::Trade => unreachable!(),
     };
 
     let block = Block::default()
@@ -1382,161 +1617,332 @@ fn render_popup(f: &mut Frame, app: &TrendingAppState, popup: &PopupType) {
 
 /// Render the login popup with input fields
 fn render_login_popup(f: &mut Frame, app: &TrendingAppState) {
-    let area = centered_rect(70, 60, f.area());
+    use ratatui::layout::Position;
+
+    let area = centered_rect(70, 70, f.area());
     f.render_widget(Clear, area);
 
     let form = &app.login_form;
 
-    // Helper to create a field line with label and value
-    let make_field_line = |label: &str, value: &str, is_active: bool, is_secret: bool| -> Line {
-        let display_value = if is_secret && !value.is_empty() {
-            "*".repeat(value.len().min(40))
-        } else if value.is_empty() {
-            "(empty)".to_string()
-        } else {
-            value.to_string()
-        };
-
-        let label_style = Style::default().fg(Color::Yellow).bold();
-        let value_style = if is_active {
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD)
-        } else if value.is_empty() {
-            Style::default().fg(Color::DarkGray)
-        } else {
-            Style::default().fg(Color::White)
-        };
-
-        let cursor = if is_active {
-            "_"
-        } else {
-            ""
-        };
-
-        Line::from(vec![
-            Span::styled(format!("{}: ", label), label_style),
-            Span::styled(display_value, value_style),
-            Span::styled(cursor, Style::default().fg(Color::Cyan)),
-        ])
+    // Calculate inner area (inside the popup border)
+    let inner_area = Rect {
+        x: area.x + 2,
+        y: area.y + 1,
+        width: area.width.saturating_sub(4),
+        height: area.height.saturating_sub(2),
     };
 
-    let mut content = vec![
-        Line::from(""),
-        Line::from(vec![Span::styled(
-            "Enter your Polymarket API credentials:",
-            Style::default().fg(Color::White),
-        )]),
-        Line::from(""),
-        make_field_line(
-            "API Key    ",
-            &form.api_key,
-            form.active_field == LoginField::ApiKey,
-            false,
-        ),
-        Line::from(""),
-        make_field_line(
-            "Secret     ",
-            &form.secret,
-            form.active_field == LoginField::Secret,
-            true,
-        ),
-        Line::from(""),
-        make_field_line(
-            "Passphrase ",
-            &form.passphrase,
-            form.active_field == LoginField::Passphrase,
-            true,
-        ),
-        Line::from(""),
-        make_field_line(
-            "Address    ",
-            &form.address,
-            form.active_field == LoginField::Address,
-            false,
-        ),
-        Line::from(""),
-    ];
+    // Field width for input boxes (leaving room for label)
+    let label_width = 12u16;
+    let field_width = inner_area.width.saturating_sub(label_width + 2);
 
-    // Add error message if present
-    if let Some(ref error) = form.error_message {
-        content.push(Line::from(vec![Span::styled(
-            format!("Error: {}", error),
-            Style::default().fg(Color::Red),
-        )]));
-        content.push(Line::from(""));
-    }
-
-    // Add validation status
-    if form.is_validating {
-        content.push(Line::from(vec![Span::styled(
-            "Validating credentials...",
-            Style::default().fg(Color::Yellow),
-        )]));
-    }
-
-    content.push(Line::from(""));
-    content.push(Line::from(vec![
-        Span::styled("Tab", Style::default().fg(Color::Cyan).bold()),
-        Span::styled(" - Next field  ", Style::default().fg(Color::DarkGray)),
-        Span::styled("Enter", Style::default().fg(Color::Green).bold()),
-        Span::styled(" - Submit  ", Style::default().fg(Color::DarkGray)),
-        Span::styled("Esc", Style::default().fg(Color::Red).bold()),
-        Span::styled(" - Cancel", Style::default().fg(Color::DarkGray)),
-    ]));
-
+    // Render the main popup block
     let block = Block::default()
         .title("Login - API Credentials")
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::Cyan))
         .style(Style::default().bg(Color::Black));
+    f.render_widget(block, area);
 
-    let paragraph = Paragraph::new(content)
-        .block(block)
-        .alignment(Alignment::Left)
-        .wrap(Wrap { trim: true });
+    // Header text
+    let header = Paragraph::new("Enter your Polymarket API credentials:")
+        .style(Style::default().fg(Color::White));
+    let header_area = Rect {
+        x: inner_area.x,
+        y: inner_area.y + 1,
+        width: inner_area.width,
+        height: 1,
+    };
+    f.render_widget(header, header_area);
 
-    f.render_widget(paragraph, area);
+    // Track cursor position for the active field
+    let mut cursor_position: Option<Position> = None;
+
+    // Helper to render an input field with a bordered box
+    let render_input_field = |f: &mut Frame,
+                              y_offset: u16,
+                              label: &str,
+                              value: &str,
+                              is_active: bool,
+                              is_secret: bool|
+     -> Option<Position> {
+        let field_y = inner_area.y + 3 + y_offset * 3;
+
+        // Render label
+        let label_para =
+            Paragraph::new(format!("{}:", label)).style(Style::default().fg(Color::Yellow).bold());
+        let label_area = Rect {
+            x: inner_area.x,
+            y: field_y,
+            width: label_width,
+            height: 1,
+        };
+        f.render_widget(label_para, label_area);
+
+        // Render input box with background
+        let input_area = Rect {
+            x: inner_area.x + label_width,
+            y: field_y,
+            width: field_width,
+            height: 1,
+        };
+
+        // Display value (masked for secrets)
+        let display_value = if is_secret && !value.is_empty() {
+            "*".repeat(value.len().min(field_width as usize - 2))
+        } else {
+            value.to_string()
+        };
+
+        // Style: different background for input field, highlighted when active
+        let (fg_color, bg_color) = if is_active {
+            (Color::White, Color::DarkGray)
+        } else {
+            (Color::Gray, Color::Rgb(30, 30, 30))
+        };
+
+        // Pad the display value to fill the field width (creates visible input area)
+        let padded_value = format!(
+            "{:<width$}",
+            display_value,
+            width = field_width as usize - 1
+        );
+
+        let input_para =
+            Paragraph::new(padded_value).style(Style::default().fg(fg_color).bg(bg_color));
+        f.render_widget(input_para, input_area);
+
+        // Return cursor position if this field is active
+        if is_active {
+            let cursor_x = input_area.x + display_value.len() as u16;
+            Some(Position::new(cursor_x, input_area.y))
+        } else {
+            None
+        }
+    };
+
+    // Render each field
+    if let Some(pos) = render_input_field(
+        f,
+        0,
+        "API Key",
+        &form.api_key,
+        form.active_field == LoginField::ApiKey,
+        false,
+    ) {
+        cursor_position = Some(pos);
+    }
+
+    if let Some(pos) = render_input_field(
+        f,
+        1,
+        "Secret",
+        &form.secret,
+        form.active_field == LoginField::Secret,
+        true,
+    ) {
+        cursor_position = Some(pos);
+    }
+
+    if let Some(pos) = render_input_field(
+        f,
+        2,
+        "Passphrase",
+        &form.passphrase,
+        form.active_field == LoginField::Passphrase,
+        true,
+    ) {
+        cursor_position = Some(pos);
+    }
+
+    if let Some(pos) = render_input_field(
+        f,
+        3,
+        "Address",
+        &form.address,
+        form.active_field == LoginField::Address,
+        false,
+    ) {
+        cursor_position = Some(pos);
+    }
+
+    // Error message area
+    let error_y = inner_area.y + 3 + 4 * 3;
+    if let Some(ref error) = form.error_message {
+        let error_para = Paragraph::new(format!("Error: {}", error))
+            .style(Style::default().fg(Color::Red))
+            .wrap(Wrap { trim: true });
+        let error_area = Rect {
+            x: inner_area.x,
+            y: error_y,
+            width: inner_area.width,
+            height: 2,
+        };
+        f.render_widget(error_para, error_area);
+    }
+
+    // Validation status
+    if form.is_validating {
+        let validating_para =
+            Paragraph::new("Validating credentials...").style(Style::default().fg(Color::Yellow));
+        let validating_area = Rect {
+            x: inner_area.x,
+            y: error_y,
+            width: inner_area.width,
+            height: 1,
+        };
+        f.render_widget(validating_para, validating_area);
+    }
+
+    // Instructions at bottom
+    let instructions = Line::from(vec![
+        Span::styled("Tab", Style::default().fg(Color::Cyan).bold()),
+        Span::styled(" Next field  ", Style::default().fg(Color::DarkGray)),
+        Span::styled("Enter", Style::default().fg(Color::Green).bold()),
+        Span::styled(" Submit  ", Style::default().fg(Color::DarkGray)),
+        Span::styled("Esc", Style::default().fg(Color::Red).bold()),
+        Span::styled(" Cancel", Style::default().fg(Color::DarkGray)),
+    ]);
+    let instructions_para = Paragraph::new(instructions);
+    let instructions_area = Rect {
+        x: inner_area.x,
+        y: area.y + area.height - 3,
+        width: inner_area.width,
+        height: 1,
+    };
+    f.render_widget(instructions_para, instructions_area);
+
+    // Set cursor position for the active field
+    if let Some(pos) = cursor_position {
+        f.set_cursor_position(pos);
+    }
 }
 
 /// Render user profile popup
 fn render_user_profile_popup(f: &mut Frame, app: &TrendingAppState) {
-    let area = centered_rect(60, 50, f.area());
+    let area = centered_rect(70, 60, f.area());
     f.render_widget(Clear, area);
 
     let auth = &app.auth_state;
 
-    let mut content = vec![
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("Status: ", Style::default().fg(Color::Yellow).bold()),
-            Span::styled(
-                if auth.is_authenticated {
-                    "Authenticated"
-                } else {
-                    "Not authenticated"
-                },
-                Style::default().fg(if auth.is_authenticated {
-                    Color::Green
-                } else {
-                    Color::Red
-                }),
-            ),
-        ]),
-        Line::from(""),
-    ];
+    let mut content = vec![Line::from("")];
 
+    // Profile section header
+    content.push(Line::from(vec![Span::styled(
+        "Profile",
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )]));
+    content.push(Line::from(""));
+
+    // Show profile information if available
+    if let Some(ref profile) = auth.profile {
+        // Name
+        if let Some(ref name) = profile.name {
+            content.push(Line::from(vec![
+                Span::styled("Name:      ", Style::default().fg(Color::DarkGray)),
+                Span::styled(name.clone(), Style::default().fg(Color::White).bold()),
+            ]));
+        }
+
+        // Pseudonym (if different from name)
+        if let Some(ref pseudonym) = profile.pseudonym {
+            let show_pseudonym = profile
+                .name
+                .as_ref()
+                .map(|n| n != pseudonym)
+                .unwrap_or(true);
+            if show_pseudonym {
+                content.push(Line::from(vec![
+                    Span::styled("Pseudonym: ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(pseudonym.clone(), Style::default().fg(Color::Cyan)),
+                ]));
+            }
+        }
+
+        // Bio
+        if let Some(ref bio) = profile.bio
+            && !bio.is_empty()
+        {
+            content.push(Line::from(""));
+            content.push(Line::from(vec![
+                Span::styled("Bio:       ", Style::default().fg(Color::DarkGray)),
+                Span::styled(truncate(bio, 50), Style::default().fg(Color::White)),
+            ]));
+        }
+
+        // Profile image URL (truncated)
+        if let Some(ref img) = profile.profile_image
+            && !img.is_empty()
+        {
+            content.push(Line::from(vec![
+                Span::styled("Avatar:    ", Style::default().fg(Color::DarkGray)),
+                Span::styled(truncate(img, 45), Style::default().fg(Color::Blue)),
+            ]));
+        }
+    } else if auth.username.is_some() {
+        // Fallback: just show username if we have it but no full profile
+        content.push(Line::from(vec![
+            Span::styled("Username:  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                auth.username.clone().unwrap_or_default(),
+                Style::default().fg(Color::White).bold(),
+            ),
+        ]));
+    } else {
+        content.push(Line::from(vec![Span::styled(
+            "(No profile information available)",
+            Style::default().fg(Color::DarkGray),
+        )]));
+    }
+
+    content.push(Line::from(""));
+    content.push(Line::from(vec![Span::styled(
+        "─".repeat(55),
+        Style::default().fg(Color::DarkGray),
+    )]));
+
+    // Account section header
+    content.push(Line::from(""));
+    content.push(Line::from(vec![Span::styled(
+        "Account",
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )]));
+    content.push(Line::from(""));
+
+    // Status
+    content.push(Line::from(vec![
+        Span::styled("Status:    ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            if auth.is_authenticated {
+                "Authenticated"
+            } else {
+                "Not authenticated"
+            },
+            Style::default().fg(if auth.is_authenticated {
+                Color::Green
+            } else {
+                Color::Red
+            }),
+        ),
+    ]));
+
+    // Address
     if let Some(ref addr) = auth.address {
         content.push(Line::from(vec![
-            Span::styled("Address: ", Style::default().fg(Color::Yellow).bold()),
+            Span::styled("Address:   ", Style::default().fg(Color::DarkGray)),
             Span::styled(addr.clone(), Style::default().fg(Color::Cyan)),
         ]));
     }
 
+    // Balance
     if let Some(balance) = auth.balance {
         content.push(Line::from(vec![
-            Span::styled("Balance: ", Style::default().fg(Color::Yellow).bold()),
+            Span::styled("Balance:   ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 format!("${:.2} USDC", balance),
                 Style::default().fg(Color::Green),
@@ -1546,12 +1952,28 @@ fn render_user_profile_popup(f: &mut Frame, app: &TrendingAppState) {
 
     content.push(Line::from(""));
     content.push(Line::from(vec![Span::styled(
-        "Press Esc to close, or 'L' to logout",
+        "─".repeat(55),
         Style::default().fg(Color::DarkGray),
     )]));
+    content.push(Line::from(""));
+
+    // Instructions
+    content.push(Line::from(vec![
+        Span::styled("Esc", Style::default().fg(Color::Cyan).bold()),
+        Span::styled(" close    ", Style::default().fg(Color::DarkGray)),
+        Span::styled("L", Style::default().fg(Color::Red).bold()),
+        Span::styled(" logout", Style::default().fg(Color::DarkGray)),
+    ]));
+
+    // Build title with username if available
+    let title = if let Some(ref name) = auth.username {
+        format!(" {} ", name)
+    } else {
+        " User Profile ".to_string()
+    };
 
     let block = Block::default()
-        .title("User Profile")
+        .title(title)
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::Cyan))
@@ -1565,31 +1987,232 @@ fn render_user_profile_popup(f: &mut Frame, app: &TrendingAppState) {
     f.render_widget(paragraph, area);
 }
 
-/// Render trade popup (placeholder for now)
-fn render_trade_popup(f: &mut Frame, _app: &TrendingAppState, token_id: &str) {
-    let area = centered_rect(60, 50, f.area());
+/// Render trade popup with buy/sell form
+fn render_trade_popup(f: &mut Frame, app: &TrendingAppState) {
+    let area = centered_rect(65, 55, f.area());
     f.render_widget(Clear, area);
 
-    let content = vec![
+    let form = match &app.trade_form {
+        Some(form) => form,
+        None => {
+            // Fallback if no form state
+            let block = Block::default()
+                .title("Trade")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(Color::Red))
+                .style(Style::default().bg(Color::Black));
+            let paragraph = Paragraph::new("Error: No trade form state")
+                .block(block)
+                .alignment(Alignment::Center);
+            f.render_widget(paragraph, area);
+            return;
+        },
+    };
+
+    use crate::trending_tui::state::{TradeField, TradeSide};
+
+    // Build content lines
+    let mut content = vec![
         Line::from(""),
+        // Market question (truncated)
+        Line::from(vec![Span::styled(
+            truncate(&form.market_question, 55),
+            Style::default().fg(Color::White).bold(),
+        )]),
+        Line::from(""),
+        // Outcome
         Line::from(vec![
-            Span::styled("Token ID: ", Style::default().fg(Color::Yellow).bold()),
-            Span::styled(truncate(token_id, 40), Style::default().fg(Color::Cyan)),
+            Span::styled("Outcome: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(&form.outcome, Style::default().fg(Color::Cyan).bold()),
+        ]),
+        // Current price
+        Line::from(vec![
+            Span::styled("Price:   ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{:.0}¢", form.price * 100.0),
+                Style::default().fg(Color::Yellow),
+            ),
         ]),
         Line::from(""),
-        Line::from("Trade functionality coming soon..."),
-        Line::from(""),
-        Line::from(vec![Span::styled(
-            "Press Esc to close",
-            Style::default().fg(Color::DarkGray),
-        )]),
     ];
 
+    // Show balance if authenticated
+    if app.auth_state.is_authenticated
+        && let Some(balance) = app.auth_state.balance
+    {
+        content.push(Line::from(vec![
+            Span::styled("Balance: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("${:.2}", balance),
+                Style::default().fg(Color::Green),
+            ),
+        ]));
+    }
+
+    content.push(Line::from(""));
+    content.push(Line::from(vec![Span::styled(
+        "─".repeat(50),
+        Style::default().fg(Color::DarkGray),
+    )]));
+    content.push(Line::from(""));
+
+    // Side selection (BUY / SELL)
+    let side_active = form.active_field == TradeField::Side;
+    let buy_style = if form.side == TradeSide::Buy {
+        Style::default().fg(Color::Black).bg(Color::Green).bold()
+    } else if side_active {
+        Style::default().fg(Color::Green)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let sell_style = if form.side == TradeSide::Sell {
+        Style::default().fg(Color::Black).bg(Color::Red).bold()
+    } else if side_active {
+        Style::default().fg(Color::Red)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    content.push(Line::from(vec![
+        Span::styled("Side:    ", Style::default().fg(Color::DarkGray)),
+        Span::styled(" BUY ", buy_style),
+        Span::raw("  "),
+        Span::styled(" SELL ", sell_style),
+        if side_active {
+            Span::styled("  ← Tab to toggle", Style::default().fg(Color::DarkGray))
+        } else {
+            Span::raw("")
+        },
+    ]));
+
+    content.push(Line::from(""));
+
+    // Amount input field
+    let amount_active = form.active_field == TradeField::Amount;
+    let amount_style = if amount_active {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let amount_display = if form.amount.is_empty() {
+        "0.00".to_string()
+    } else {
+        form.amount.clone()
+    };
+
+    content.push(Line::from(vec![
+        Span::styled("Amount:  ", Style::default().fg(Color::DarkGray)),
+        Span::styled("$ ", amount_style),
+        Span::styled(
+            &amount_display,
+            if amount_active {
+                Style::default().fg(Color::White).bold()
+            } else {
+                Style::default().fg(Color::White)
+            },
+        ),
+        if amount_active {
+            Span::styled("_", Style::default().fg(Color::Cyan))
+        } else {
+            Span::raw("")
+        },
+    ]));
+
+    content.push(Line::from(""));
+
+    // Estimated shares and profit
+    let shares = form.estimated_shares();
+    let profit = form.potential_profit();
+
+    content.push(Line::from(vec![
+        Span::styled("Est. Shares: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("{:.2}", shares), Style::default().fg(Color::White)),
+    ]));
+
+    let profit_color = if profit >= 0.0 {
+        Color::Green
+    } else {
+        Color::Red
+    };
+    content.push(Line::from(vec![
+        Span::styled(
+            if form.side == TradeSide::Buy {
+                "Potential Profit: "
+            } else {
+                "Proceeds: "
+            },
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::styled(
+            format!(
+                "{}${:.2}",
+                if profit >= 0.0 {
+                    "+"
+                } else {
+                    ""
+                },
+                profit.abs()
+            ),
+            Style::default().fg(profit_color),
+        ),
+        if form.side == TradeSide::Buy {
+            Span::styled(" (if outcome wins)", Style::default().fg(Color::DarkGray))
+        } else {
+            Span::raw("")
+        },
+    ]));
+
+    content.push(Line::from(""));
+    content.push(Line::from(vec![Span::styled(
+        "─".repeat(50),
+        Style::default().fg(Color::DarkGray),
+    )]));
+
+    // Error message if any
+    if let Some(ref error) = form.error_message {
+        content.push(Line::from(""));
+        content.push(Line::from(vec![Span::styled(
+            error,
+            Style::default().fg(Color::Red),
+        )]));
+    }
+
+    // Not authenticated warning
+    if !app.auth_state.is_authenticated {
+        content.push(Line::from(""));
+        content.push(Line::from(vec![Span::styled(
+            "⚠ Login required to trade",
+            Style::default().fg(Color::Yellow),
+        )]));
+    }
+
+    content.push(Line::from(""));
+
+    // Instructions
+    content.push(Line::from(vec![
+        Span::styled("Tab", Style::default().fg(Color::Cyan).bold()),
+        Span::styled(" switch field  ", Style::default().fg(Color::DarkGray)),
+        Span::styled("Space", Style::default().fg(Color::Cyan).bold()),
+        Span::styled(" toggle side  ", Style::default().fg(Color::DarkGray)),
+        Span::styled("Enter", Style::default().fg(Color::Green).bold()),
+        Span::styled(" submit  ", Style::default().fg(Color::DarkGray)),
+        Span::styled("Esc", Style::default().fg(Color::Red).bold()),
+        Span::styled(" cancel", Style::default().fg(Color::DarkGray)),
+    ]));
+
+    let title = format!(" {} {} ", form.side.label(), truncate(&form.outcome, 20));
+    let border_color = if form.side == TradeSide::Buy {
+        Color::Green
+    } else {
+        Color::Red
+    };
+
     let block = Block::default()
-        .title("Trade")
+        .title(title)
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::Cyan))
+        .border_style(Style::default().fg(border_color))
         .style(Style::default().bg(Color::Black));
 
     let paragraph = Paragraph::new(content)
@@ -2345,6 +2968,21 @@ fn render_markets(f: &mut Frame, app: &TrendingAppState, event: &Event, area: Re
             // Status indicator: ● for active, ◐ for in-review, ○ for resolved
             // Add $ for yield opportunity (high probability market)
             let has_yield = market_has_yield(market);
+
+            // Calculate yield return if there's a yield opportunity
+            // Find the highest price outcome that qualifies as yield (>= 95%)
+            let yield_return: Option<f64> = if has_yield {
+                market
+                    .outcome_prices
+                    .iter()
+                    .filter_map(|price_str| price_str.parse::<f64>().ok())
+                    .filter(|&price| (YIELD_MIN_PROB..1.0).contains(&price))
+                    .map(|price| (1.0 / price - 1.0) * 100.0) // Convert to percentage return
+                    .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)) // Best (lowest cost = highest price) yield
+            } else {
+                None
+            };
+
             let status_icon = if market.closed {
                 "○ "
             } else if has_yield {
@@ -2410,21 +3048,37 @@ fn render_markets(f: &mut Frame, app: &TrendingAppState, event: &Event, area: Re
             // Calculate widths for right alignment
             let usable_width = (area.width as usize).saturating_sub(2); // -2 for borders
 
-            // Calculate space needed for outcomes and volume (right-aligned)
+            // Format yield return string if applicable
+            let yield_str = yield_return.map(|ret| format!("+{:.1}%", ret));
+
+            // Calculate space needed for right-aligned content
+            // Order from right to left: volume, outcomes, yield (if any)
             // Use .width() for proper Unicode width calculation
             let outcomes_width = outcomes_str.width();
             let volume_width = volume_str.len();
+            let yield_width = yield_str.as_ref().map(|s| s.len()).unwrap_or(0);
+
             let has_outcomes = !outcomes_str.is_empty();
             let has_volume = !volume_str.is_empty();
-            let right_content_width = if has_outcomes && has_volume {
-                outcomes_width + 1 + volume_width // outcomes + space + volume
-            } else if has_outcomes {
-                outcomes_width
-            } else if has_volume {
-                volume_width
-            } else {
-                0
-            };
+            let has_yield_str = yield_str.is_some();
+
+            // Calculate total right content width: [yield] [outcomes] [volume]
+            let mut right_content_width = 0;
+            if has_yield_str {
+                right_content_width += yield_width;
+            }
+            if has_outcomes {
+                if right_content_width > 0 {
+                    right_content_width += 1; // space
+                }
+                right_content_width += outcomes_width;
+            }
+            if has_volume {
+                if right_content_width > 0 {
+                    right_content_width += 1; // space
+                }
+                right_content_width += volume_width;
+            }
 
             // Calculate available width for question (reserve space for icon + right content + 1 space padding)
             let icon_width = status_icon.width();
@@ -2464,22 +3118,36 @@ fn render_markets(f: &mut Frame, app: &TrendingAppState, event: &Event, area: Re
                 Span::styled(question, Style::default().fg(Color::White)),
             ];
 
-            // Add spaces to push outcomes and volume to the right
+            // Add spaces to push right content to the right
             if remaining_width > 0 {
                 line_spans.push(Span::styled(" ".repeat(remaining_width), Style::default()));
             }
 
-            // Add right-aligned outcomes and volume
+            // Add right-aligned content in order: [yield] [outcomes] [volume]
+            // Yield return (if any) - prepended before outcomes
+            if let Some(ref yield_s) = yield_str {
+                line_spans.push(Span::styled(
+                    yield_s.clone(),
+                    Style::default().fg(Color::Yellow),
+                ));
+                if has_outcomes || has_volume {
+                    line_spans.push(Span::styled(" ", Style::default()));
+                }
+            }
+
+            // Outcomes (Yes/No prices)
             if has_outcomes {
                 line_spans.push(Span::styled(
                     outcomes_str.clone(),
                     Style::default().fg(Color::Cyan),
                 ));
-            }
-            if has_volume {
-                if has_outcomes {
+                if has_volume {
                     line_spans.push(Span::styled(" ", Style::default()));
                 }
+            }
+
+            // Volume (always on the right)
+            if has_volume {
                 line_spans.push(Span::styled(
                     volume_str.clone(),
                     Style::default().fg(Color::Green),

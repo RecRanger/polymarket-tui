@@ -72,10 +72,11 @@ pub enum FocusedPanel {
     Logs,         // Bottom panel - logs
 }
 
-/// Main tab at the top level (Trending vs Yield)
+/// Main tab at the top level
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MainTab {
     Trending,
+    Favorites,
     Yield,
 }
 
@@ -84,6 +85,7 @@ impl MainTab {
     pub fn label(&self) -> &'static str {
         match self {
             MainTab::Trending => "Trending",
+            MainTab::Favorites => "Favorites",
             MainTab::Yield => "Yield",
         }
     }
@@ -91,14 +93,19 @@ impl MainTab {
     #[allow(dead_code)]
     pub fn next(&self) -> Self {
         match self {
-            MainTab::Trending => MainTab::Yield,
+            MainTab::Trending => MainTab::Favorites,
+            MainTab::Favorites => MainTab::Yield,
             MainTab::Yield => MainTab::Trending,
         }
     }
 
     #[allow(dead_code)]
     pub fn prev(&self) -> Self {
-        self.next() // Only 2 tabs, so prev == next
+        match self {
+            MainTab::Trending => MainTab::Yield,
+            MainTab::Favorites => MainTab::Trending,
+            MainTab::Yield => MainTab::Favorites,
+        }
     }
 }
 
@@ -154,7 +161,7 @@ pub enum SearchMode {
 }
 
 /// Popup types for modal dialogs
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]
 pub enum PopupType {
     Help,              // Show help/keyboard shortcuts
@@ -162,7 +169,7 @@ pub enum PopupType {
     EventInfo(String), // Show detailed event info (slug)
     Login,             // Login modal with credential input
     UserProfile,       // Show authenticated user profile
-    Trade(String),     // Trade modal for a market (token_id)
+    Trade,             // Trade modal (form state is in app.trade_form)
 }
 
 /// Login form field being edited
@@ -172,6 +179,134 @@ pub enum LoginField {
     Secret,
     Passphrase,
     Address,
+}
+
+/// Trade side (Buy or Sell)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TradeSide {
+    Buy,
+    Sell,
+}
+
+impl TradeSide {
+    pub fn toggle(&self) -> Self {
+        match self {
+            TradeSide::Buy => TradeSide::Sell,
+            TradeSide::Sell => TradeSide::Buy,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            TradeSide::Buy => "BUY",
+            TradeSide::Sell => "SELL",
+        }
+    }
+}
+
+/// Trade form field being edited
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TradeField {
+    Side,
+    Amount,
+}
+
+impl TradeField {
+    pub fn next(&self) -> Self {
+        match self {
+            TradeField::Side => TradeField::Amount,
+            TradeField::Amount => TradeField::Side,
+        }
+    }
+
+    pub fn prev(&self) -> Self {
+        self.next() // Only 2 fields
+    }
+}
+
+/// Trade form state
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct TradeFormState {
+    pub token_id: String,
+    pub market_question: String,
+    pub outcome: String,
+    pub side: TradeSide,
+    pub amount: String, // Amount in dollars (input as string for editing)
+    pub price: f64,     // Current market price
+    pub active_field: TradeField,
+    pub error_message: Option<String>,
+    pub is_submitting: bool,
+}
+
+impl TradeFormState {
+    pub fn new(token_id: String, market_question: String, outcome: String, price: f64) -> Self {
+        Self {
+            token_id,
+            market_question,
+            outcome,
+            side: TradeSide::Buy,
+            amount: String::new(),
+            price,
+            active_field: TradeField::Amount,
+            error_message: None,
+            is_submitting: false,
+        }
+    }
+
+    pub fn add_char(&mut self, c: char) {
+        if self.active_field == TradeField::Amount {
+            // Only allow numeric input and decimal point
+            if c.is_ascii_digit() || (c == '.' && !self.amount.contains('.')) {
+                self.amount.push(c);
+            }
+        }
+        self.error_message = None;
+    }
+
+    pub fn delete_char(&mut self) {
+        if self.active_field == TradeField::Amount {
+            self.amount.pop();
+        }
+        self.error_message = None;
+    }
+
+    pub fn toggle_side(&mut self) {
+        self.side = self.side.toggle();
+        self.error_message = None;
+    }
+
+    pub fn amount_f64(&self) -> f64 {
+        self.amount.parse().unwrap_or(0.0)
+    }
+
+    /// Calculate estimated shares based on amount and price
+    pub fn estimated_shares(&self) -> f64 {
+        let amount = self.amount_f64();
+        if self.price > 0.0 {
+            amount / self.price
+        } else {
+            0.0
+        }
+    }
+
+    /// Calculate potential profit (for buy: payout - cost, for sell: proceeds)
+    pub fn potential_profit(&self) -> f64 {
+        let shares = self.estimated_shares();
+        match self.side {
+            TradeSide::Buy => shares - self.amount_f64(), // Shares pay $1 each if won
+            TradeSide::Sell => self.amount_f64(),         // Proceeds from selling
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn clear(&mut self) {
+        self.amount.clear();
+        self.side = TradeSide::Buy;
+        self.active_field = TradeField::Amount;
+        self.error_message = None;
+        self.is_submitting = false;
+    }
 }
 
 #[allow(dead_code)]
@@ -269,6 +404,15 @@ impl LoginFormState {
     }
 }
 
+/// User profile information from Polymarket
+#[derive(Debug, Clone, Default)]
+pub struct UserProfile {
+    pub name: Option<String>,
+    pub pseudonym: Option<String>,
+    pub bio: Option<String>,
+    pub profile_image: Option<String>,
+}
+
 /// User authentication state
 #[derive(Debug, Clone)]
 pub struct AuthState {
@@ -276,6 +420,7 @@ pub struct AuthState {
     pub username: Option<String>,
     pub address: Option<String>,
     pub balance: Option<f64>,
+    pub profile: Option<UserProfile>,
 }
 
 impl AuthState {
@@ -285,6 +430,7 @@ impl AuthState {
             username: None,
             address: None,
             balance: None,
+            profile: None,
         }
     }
 
@@ -292,11 +438,7 @@ impl AuthState {
         if let Some(ref name) = self.username {
             name.clone()
         } else if let Some(ref addr) = self.address {
-            if addr.len() >= 10 {
-                format!("{}...{}", &addr[..6], &addr[addr.len() - 4..])
-            } else {
-                addr.clone()
-            }
+            addr.clone()
         } else {
             "Unknown".to_string()
         }
@@ -678,6 +820,61 @@ impl YieldState {
     }
 }
 
+/// Favorites tab state
+#[derive(Debug)]
+pub struct FavoritesState {
+    pub events: Vec<Event>,
+    pub favorite_ids: Vec<polymarket_api::FavoriteEvent>, // Favorite entries from API
+    pub selected_index: usize,
+    pub scroll: usize,
+    pub is_loading: bool,
+    pub error_message: Option<String>,
+}
+
+#[allow(dead_code)]
+impl FavoritesState {
+    pub fn new() -> Self {
+        Self {
+            events: Vec::new(),
+            favorite_ids: Vec::new(),
+            selected_index: 0,
+            scroll: 0,
+            is_loading: false,
+            error_message: None,
+        }
+    }
+
+    pub fn selected_event(&self) -> Option<&Event> {
+        self.events.get(self.selected_index)
+    }
+
+    pub fn move_up(&mut self) {
+        if self.selected_index > 0 {
+            self.selected_index -= 1;
+            if self.selected_index < self.scroll {
+                self.scroll = self.selected_index;
+            }
+        }
+    }
+
+    pub fn move_down(&mut self, visible_height: usize) {
+        if self.selected_index + 1 < self.events.len() {
+            self.selected_index += 1;
+            if self.selected_index >= self.scroll + visible_height {
+                self.scroll = self.selected_index - visible_height + 1;
+            }
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.events.clear();
+        self.favorite_ids.clear();
+        self.selected_index = 0;
+        self.scroll = 0;
+        self.error_message = None;
+    }
+}
+
 /// Main application state
 pub struct TrendingAppState {
     pub events: Vec<Event>,
@@ -698,8 +895,10 @@ pub struct TrendingAppState {
     pub show_logs: bool,           // Whether to show the logs panel (toggle with 'l')
     pub main_tab: MainTab,         // Current main tab (Trending vs Yield)
     pub yield_state: YieldState,   // State for the Yield tab
+    pub favorites_state: FavoritesState, // State for the Favorites tab
     pub auth_state: AuthState,     // Authentication state
     pub login_form: LoginFormState, // Login form state
+    pub trade_form: Option<TradeFormState>, // Trade form state (when trade popup is open)
 }
 
 impl TrendingAppState {
@@ -735,8 +934,10 @@ impl TrendingAppState {
             show_logs: false, // Hidden by default
             main_tab: MainTab::Trending,
             yield_state: YieldState::new(),
+            favorites_state: FavoritesState::new(),
             auth_state: AuthState::new(),
             login_form: LoginFormState::new(),
+            trade_form: None,
         }
     }
 
@@ -748,6 +949,25 @@ impl TrendingAppState {
     /// Close the active popup
     pub fn close_popup(&mut self) {
         self.popup = None;
+        // Clear trade form when closing trade popup
+        self.trade_form = None;
+    }
+
+    /// Open trade popup for a specific market
+    pub fn open_trade_popup(
+        &mut self,
+        token_id: String,
+        market_question: String,
+        outcome: String,
+        price: f64,
+    ) {
+        self.trade_form = Some(TradeFormState::new(
+            token_id,
+            market_question,
+            outcome,
+            price,
+        ));
+        self.popup = Some(PopupType::Trade);
     }
 
     /// Check if a popup is active
