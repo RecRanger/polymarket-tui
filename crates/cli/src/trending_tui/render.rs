@@ -35,26 +35,19 @@ fn format_with_thousands(n: f64, decimals: usize) -> String {
     let int_part = parts[0];
 
     // Add thousands separators to integer part
-    let int_with_sep: String = int_part
-        .chars()
-        .rev()
-        .enumerate()
-        .map(|(i, c)| {
-            if i > 0 && i % 3 == 0 {
-                format!(",{}", c)
-            } else {
-                c.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
+    let chars: Vec<char> = int_part.chars().collect();
+    let mut result = String::new();
+    for (i, c) in chars.iter().enumerate() {
+        if i > 0 && (chars.len() - i).is_multiple_of(3) {
+            result.push(',');
+        }
+        result.push(*c);
+    }
 
     if decimals > 0 && parts.len() > 1 {
-        format!("{}.{}", int_with_sep, parts[1])
+        format!("{}.{}", result, parts[1])
     } else {
-        int_with_sep
+        result
     }
 }
 
