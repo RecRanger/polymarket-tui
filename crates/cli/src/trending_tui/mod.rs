@@ -637,10 +637,18 @@ fn spawn_fetch_orderbook(app_state: Arc<TokioMutex<TrendingAppState>>, token_id:
         match clob_client.get_orderbook_by_asset(&token_id).await {
             Ok(orderbook) => {
                 log_info!(
-                    "Orderbook fetched: {} bids, {} asks",
+                    "Orderbook fetched for {}: {} bids, {} asks",
+                    token_id,
                     orderbook.bids.len(),
                     orderbook.asks.len()
                 );
+                // Log first few prices to help debug
+                if let Some(bid) = orderbook.bids.first() {
+                    log_info!("Best bid: {} @ {}", bid.size, bid.price);
+                }
+                if let Some(ask) = orderbook.asks.first() {
+                    log_info!("Best ask: {} @ {}", ask.size, ask.price);
+                }
 
                 // Convert CLOB API Orderbook to our OrderbookData
                 // Calculate cumulative totals (running sum of price * size from best price)
