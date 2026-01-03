@@ -721,11 +721,17 @@ fn spawn_fetch_orderbook(app_state: Arc<TokioMutex<TrendingAppState>>, token_id:
                     last_price: None,
                 };
 
+                // Calculate height based on data (up to 6 per side)
+                let asks_count = orderbook_data.asks.len().min(6);
+                let bids_count = orderbook_data.bids.len().min(6);
+                let new_height = (2 + 1 + asks_count + 1 + bids_count) as u16; // borders + header + asks + spread + bids
+
                 let mut app = app_state.lock().await;
                 app.orderbook_state.orderbook = Some(orderbook_data);
                 app.orderbook_state.is_loading = false;
                 app.orderbook_state.last_fetch = Some(std::time::Instant::now());
                 app.orderbook_state.token_id = Some(token_id);
+                app.orderbook_state.last_height = new_height.max(5); // min height of 5
             },
             Err(e) => {
                 log_error!("Failed to fetch orderbook for {}: {}", token_id, e);

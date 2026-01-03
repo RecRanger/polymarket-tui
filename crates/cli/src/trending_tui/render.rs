@@ -52,17 +52,15 @@ fn format_with_thousands(n: f64, decimals: usize) -> String {
 }
 
 /// Calculate the required height for the orderbook panel based on data
-/// Uses actual data size when available, max height when loading
+/// Uses actual data size when available, preserves last height when loading
 fn calculate_orderbook_height(app: &TrendingAppState) -> u16 {
     const MAX_PER_SIDE: usize = 6;
-    // Max height = borders(2) + header(1) + 6 asks + spread(1) + 6 bids = 16
-    const MAX_HEIGHT: u16 = 16;
     // Min height = borders(2) + header(1) + spread(1) + message line = 5
     const MIN_HEIGHT: u16 = 5;
 
     if app.orderbook_state.is_loading {
-        // Keep max height during loading to prevent layout jumps
-        MAX_HEIGHT
+        // Keep the same height during loading to prevent layout jumps
+        app.orderbook_state.last_height
     } else if let Some(orderbook) = &app.orderbook_state.orderbook {
         let asks_count = orderbook.asks.len().min(MAX_PER_SIDE);
         let bids_count = orderbook.bids.len().min(MAX_PER_SIDE);
@@ -70,8 +68,8 @@ fn calculate_orderbook_height(app: &TrendingAppState) -> u16 {
         let height = 2 + 1 + asks_count + 1 + bids_count;
         (height as u16).max(MIN_HEIGHT)
     } else {
-        // No data yet, use min height
-        MIN_HEIGHT
+        // No data yet, use last height or min height
+        app.orderbook_state.last_height.max(MIN_HEIGHT)
     }
 }
 

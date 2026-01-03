@@ -1063,6 +1063,7 @@ pub struct OrderbookState {
     pub is_loading: bool,
     pub last_fetch: Option<std::time::Instant>,
     pub token_id: Option<String>, // Current token ID being displayed
+    pub last_height: u16,         // Last rendered height to prevent jumps during loading
 }
 
 impl OrderbookState {
@@ -1074,6 +1075,7 @@ impl OrderbookState {
             is_loading: false,
             last_fetch: None,
             token_id: None,
+            last_height: 5, // Start with min height
         }
     }
 
