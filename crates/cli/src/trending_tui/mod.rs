@@ -642,12 +642,18 @@ fn spawn_fetch_orderbook(app_state: Arc<TokioMutex<TrendingAppState>>, token_id:
                     orderbook.bids.len(),
                     orderbook.asks.len()
                 );
-                // Log first few prices to help debug
+                // Log first and last prices to help debug ordering
                 if let Some(bid) = orderbook.bids.first() {
-                    log_info!("Best bid: {} @ {}", bid.size, bid.price);
+                    log_info!("First bid: {} @ {}", bid.size, bid.price);
+                }
+                if let Some(bid) = orderbook.bids.last() {
+                    log_info!("Last bid: {} @ {}", bid.size, bid.price);
                 }
                 if let Some(ask) = orderbook.asks.first() {
-                    log_info!("Best ask: {} @ {}", ask.size, ask.price);
+                    log_info!("First ask: {} @ {}", ask.size, ask.price);
+                }
+                if let Some(ask) = orderbook.asks.last() {
+                    log_info!("Last ask: {} @ {}", ask.size, ask.price);
                 }
 
                 // Convert CLOB API Orderbook to our OrderbookData
