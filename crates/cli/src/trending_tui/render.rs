@@ -4645,11 +4645,13 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
     let orderbook_state = &app.orderbook_state;
     let selected_outcome = orderbook_state.selected_outcome;
 
-    // Get the selected market
+    // Get the selected market from sorted list (non-closed first, same as render_markets)
+    let mut sorted_markets: Vec<_> = event.markets.iter().collect();
+    sorted_markets.sort_by_key(|m| m.closed);
     let selected_market_idx = orderbook_state
         .selected_market_index
-        .min(event.markets.len().saturating_sub(1));
-    let market = event.markets.get(selected_market_idx);
+        .min(sorted_markets.len().saturating_sub(1));
+    let market = sorted_markets.get(selected_market_idx).copied();
 
     // Get outcome names from market (default to Yes/No if not available)
     let (outcome_0_name, outcome_1_name) = if let Some(m) = market {

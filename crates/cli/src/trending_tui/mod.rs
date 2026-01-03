@@ -1333,10 +1333,13 @@ pub async fn run_trending_tui(
                         matches!(current_tab, MainTab::Trending | MainTab::Favorites);
 
                     if should_fetch {
+                        // Get orderbook token from first market in sorted list (non-closed first)
                         let orderbook_token_id = if current_tab == MainTab::Favorites {
                             // For favorites, get from favorites_state
                             app.favorites_state.selected_event().and_then(|event| {
-                                event.markets.first().and_then(|market| {
+                                let mut sorted: Vec<_> = event.markets.iter().collect();
+                                sorted.sort_by_key(|m| m.closed);
+                                sorted.first().and_then(|market| {
                                     market
                                         .clob_token_ids
                                         .as_ref()
@@ -1346,7 +1349,9 @@ pub async fn run_trending_tui(
                         } else {
                             // For Events/Breaking tabs
                             app.selected_event().and_then(|event| {
-                                event.markets.first().and_then(|market| {
+                                let mut sorted: Vec<_> = event.markets.iter().collect();
+                                sorted.sort_by_key(|m| m.closed);
+                                sorted.first().and_then(|market| {
                                     market
                                         .clob_token_ids
                                         .as_ref()
@@ -1651,9 +1656,12 @@ pub async fn run_trending_tui(
                                     app.scroll.markets = 0;
 
                                     // Fetch orderbook for the first market of the selected event
+                                    // Fetch orderbook for first market (sorted, non-closed first)
                                     let orderbook_token_id =
                                         app.selected_event().and_then(|event| {
-                                            event.markets.first().and_then(|market| {
+                                            let mut sorted: Vec<_> = event.markets.iter().collect();
+                                            sorted.sort_by_key(|m| m.closed);
+                                            sorted.first().and_then(|market| {
                                                 market
                                                     .clob_token_ids
                                                     .as_ref()
@@ -2741,10 +2749,12 @@ pub async fn run_trending_tui(
                                 state::OrderbookOutcome::Yes => 0,
                                 state::OrderbookOutcome::No => 1,
                             };
-                            // Trigger orderbook fetch for the new outcome
+                            // Trigger orderbook fetch for the new outcome (use sorted markets)
                             let orderbook_token_id = app.selected_event().and_then(|event| {
+                                let mut sorted_markets: Vec<_> = event.markets.iter().collect();
+                                sorted_markets.sort_by_key(|m| m.closed);
                                 let market_idx = app.orderbook_state.selected_market_index;
-                                event.markets.get(market_idx).and_then(|market| {
+                                sorted_markets.get(market_idx).and_then(|market| {
                                     market
                                         .clob_token_ids
                                         .as_ref()
@@ -3074,13 +3084,18 @@ pub async fn run_trending_tui(
                                             }
 
                                             // Fetch orderbook for the first market's first outcome (Yes)
-                                            let orderbook_token_id =
-                                                event.markets.first().and_then(|market| {
+                                            // Use sorted markets (non-closed first)
+                                            let orderbook_token_id = {
+                                                let mut sorted: Vec<_> =
+                                                    event.markets.iter().collect();
+                                                sorted.sort_by_key(|m| m.closed);
+                                                sorted.first().and_then(|market| {
                                                     market
                                                         .clob_token_ids
                                                         .as_ref()
                                                         .and_then(|ids| ids.first().cloned())
-                                                });
+                                                })
+                                            };
                                             app.orderbook_state.reset();
                                             if let Some(token_id) = orderbook_token_id {
                                                 spawn_fetch_orderbook(
@@ -3107,8 +3122,11 @@ pub async fn run_trending_tui(
                                             app.scroll.markets =
                                                 app.orderbook_state.selected_market_index;
                                         }
-                                        // Fetch orderbook for new selection
+                                        // Fetch orderbook for new selection (use sorted markets)
                                         if let Some(event) = app.selected_event() {
+                                            let mut sorted_markets: Vec<_> =
+                                                event.markets.iter().collect();
+                                            sorted_markets.sort_by_key(|m| m.closed);
                                             let market_idx =
                                                 app.orderbook_state.selected_market_index;
                                             let outcome_idx =
@@ -3116,7 +3134,7 @@ pub async fn run_trending_tui(
                                                     state::OrderbookOutcome::Yes => 0,
                                                     state::OrderbookOutcome::No => 1,
                                                 };
-                                            if let Some(market) = event.markets.get(market_idx)
+                                            if let Some(market) = sorted_markets.get(market_idx)
                                                 && let Some(token_id) = market
                                                     .clob_token_ids
                                                     .as_ref()
@@ -3240,13 +3258,18 @@ pub async fn run_trending_tui(
                                             }
 
                                             // Fetch orderbook for the first market's first outcome (Yes)
-                                            let orderbook_token_id =
-                                                event.markets.first().and_then(|market| {
+                                            // Use sorted markets (non-closed first)
+                                            let orderbook_token_id = {
+                                                let mut sorted: Vec<_> =
+                                                    event.markets.iter().collect();
+                                                sorted.sort_by_key(|m| m.closed);
+                                                sorted.first().and_then(|market| {
                                                     market
                                                         .clob_token_ids
                                                         .as_ref()
                                                         .and_then(|ids| ids.first().cloned())
-                                                });
+                                                })
+                                            };
                                             app.orderbook_state.reset();
                                             if let Some(token_id) = orderbook_token_id {
                                                 spawn_fetch_orderbook(
@@ -3361,9 +3384,12 @@ pub async fn run_trending_tui(
                                 },
                                 FocusedPanel::Markets => {
                                     // Move selected market down and fetch orderbook
-                                    // Extract data we need before modifying app state
+                                    // Extract data we need before modifying app state (use sorted markets)
                                     let market_info = app.selected_event().and_then(|event| {
-                                        let max_index = event.markets.len().saturating_sub(1);
+                                        let mut sorted_markets: Vec<_> =
+                                            event.markets.iter().collect();
+                                        sorted_markets.sort_by_key(|m| m.closed);
+                                        let max_index = sorted_markets.len().saturating_sub(1);
                                         let current_idx = app.orderbook_state.selected_market_index;
                                         if current_idx < max_index {
                                             let new_idx = current_idx + 1;
@@ -3373,7 +3399,7 @@ pub async fn run_trending_tui(
                                                     state::OrderbookOutcome::No => 1,
                                                 };
                                             let token_id =
-                                                event.markets.get(new_idx).and_then(|market| {
+                                                sorted_markets.get(new_idx).and_then(|market| {
                                                     market.clob_token_ids.as_ref().and_then(|ids| {
                                                         ids.get(outcome_idx).cloned()
                                                     })
