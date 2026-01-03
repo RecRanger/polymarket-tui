@@ -603,7 +603,11 @@ fn spawn_fetch_event_for_cache(app_state: Arc<TokioMutex<TrendingAppState>>, eve
 
         match gamma_client.get_event_by_slug(&event_slug).await {
             Ok(Some(event)) => {
-                log_info!("Cached event: {} ({} markets)", event.title, event.markets.len());
+                log_info!(
+                    "Cached event: {} ({} markets)",
+                    event.title,
+                    event.markets.len()
+                );
                 let mut app = app_state.lock().await;
                 app.event_cache.insert(event_slug, event);
             },
@@ -612,6 +616,86 @@ fn spawn_fetch_event_for_cache(app_state: Arc<TokioMutex<TrendingAppState>>, eve
             },
             Err(e) => {
                 log_error!("Failed to fetch event {}: {}", event_slug, e);
+            },
+        }
+    });
+}
+
+/// Spawn async task to fetch orderbook data for a specific token ID
+fn spawn_fetch_orderbook(app_state: Arc<TokioMutex<TrendingAppState>>, token_id: String) {
+    let clob_client = ClobClient::new();
+
+    tokio::spawn(async move {
+        log_info!("Fetching orderbook for token: {}", token_id);
+
+        // Set loading state
+        {
+            let mut app = app_state.lock().await;
+            app.orderbook_state.is_loading = true;
+        }
+
+        match clob_client.get_orderbook_by_asset(&token_id).await {
+            Ok(orderbook) => {
+                log_info!(
+                    "Orderbook fetched: {} bids, {} asks",
+                    orderbook.bids.len(),
+                    orderbook.asks.len()
+                );
+
+                // Convert CLOB API Orderbook to our OrderbookData
+                let bids: Vec<state::OrderbookLevel> = orderbook
+                    .bids
+                    .iter()
+                    .map(|level| {
+                        let price = level.price.parse::<f64>().unwrap_or(0.0);
+                        let size = level.size.parse::<f64>().unwrap_or(0.0);
+                        state::OrderbookLevel {
+                            price,
+                            size,
+                            total: price * size,
+                        }
+                    })
+                    .collect();
+
+                let asks: Vec<state::OrderbookLevel> = orderbook
+                    .asks
+                    .iter()
+                    .map(|level| {
+                        let price = level.price.parse::<f64>().unwrap_or(0.0);
+                        let size = level.size.parse::<f64>().unwrap_or(0.0);
+                        state::OrderbookLevel {
+                            price,
+                            size,
+                            total: price * size,
+                        }
+                    })
+                    .collect();
+
+                // Calculate spread
+                let spread = if let (Some(best_bid), Some(best_ask)) = (bids.first(), asks.first())
+                {
+                    Some(best_ask.price - best_bid.price)
+                } else {
+                    None
+                };
+
+                let orderbook_data = state::OrderbookData {
+                    bids,
+                    asks,
+                    spread,
+                    last_price: None,
+                };
+
+                let mut app = app_state.lock().await;
+                app.orderbook_state.orderbook = Some(orderbook_data);
+                app.orderbook_state.is_loading = false;
+                app.orderbook_state.last_fetch = Some(std::time::Instant::now());
+                app.orderbook_state.token_id = Some(token_id);
+            },
+            Err(e) => {
+                log_error!("Failed to fetch orderbook for {}: {}", token_id, e);
+                let mut app = app_state.lock().await;
+                app.orderbook_state.is_loading = false;
             },
         }
     });
@@ -1058,10 +1142,10 @@ fn spawn_yield_search(app_state: Arc<TokioMutex<TrendingAppState>>, query: Strin
 
         let query_clone = query.clone();
         let mut app = app_state.lock().await;
-        
+
         // Cache all events from search results
         app.cache_events(&events);
-        
+
         // Sort: events with yield first (by return), then events without yield (by volume from cache)
         results.sort_by(|a, b| {
             match (&a.best_yield, &b.best_yield) {
@@ -1073,17 +1157,31 @@ fn spawn_yield_search(app_state: Arc<TokioMutex<TrendingAppState>>, query: Strin
                 (None, Some(_)) => std::cmp::Ordering::Greater, // b (with yield) comes first
                 (None, None) => {
                     // Look up volumes from cache
-                    let vol_a = app.get_cached_event(&a.event_slug)
-                        .map(|e| e.markets.iter().map(|m| m.volume_24hr.unwrap_or(0.0)).sum::<f64>())
+                    let vol_a = app
+                        .get_cached_event(&a.event_slug)
+                        .map(|e| {
+                            e.markets
+                                .iter()
+                                .map(|m| m.volume_24hr.unwrap_or(0.0))
+                                .sum::<f64>()
+                        })
                         .unwrap_or(0.0);
-                    let vol_b = app.get_cached_event(&b.event_slug)
-                        .map(|e| e.markets.iter().map(|m| m.volume_24hr.unwrap_or(0.0)).sum::<f64>())
+                    let vol_b = app
+                        .get_cached_event(&b.event_slug)
+                        .map(|e| {
+                            e.markets
+                                .iter()
+                                .map(|m| m.volume_24hr.unwrap_or(0.0))
+                                .sum::<f64>()
+                        })
                         .unwrap_or(0.0);
-                    vol_b.partial_cmp(&vol_a).unwrap_or(std::cmp::Ordering::Equal)
-                }
+                    vol_b
+                        .partial_cmp(&vol_a)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                },
             }
         });
-        
+
         app.yield_state.set_search_results(results, query_clone);
 
         log_info!(
@@ -1171,11 +1269,10 @@ pub async fn run_trending_tui(
         let limit = app.pagination.current_limit;
 
         // Preload the filter that isn't currently loaded
-        let filters_to_preload: Vec<EventFilter> =
-            [EventFilter::Trending, EventFilter::Breaking]
-                .into_iter()
-                .filter(|f| *f != current_filter)
-                .collect();
+        let filters_to_preload: Vec<EventFilter> = [EventFilter::Trending, EventFilter::Breaking]
+            .into_iter()
+            .filter(|f| *f != current_filter)
+            .collect();
 
         for filter in filters_to_preload {
             let app_state_clone = Arc::clone(&app_state);
@@ -1208,6 +1305,21 @@ pub async fn run_trending_tui(
         if last_status_check.elapsed() >= tokio::time::Duration::from_secs(30) {
             spawn_fetch_api_status(Arc::clone(&app_state));
             last_status_check = tokio::time::Instant::now();
+        }
+
+        // Periodically refresh orderbook data (every 5 seconds) when in Events tab
+        {
+            let app = app_state.lock().await;
+            if app.main_tab == MainTab::Trending
+                && !app.has_popup()
+                && app.orderbook_state.needs_refresh()
+                && !app.orderbook_state.is_loading
+                && let Some(ref token_id) = app.orderbook_state.token_id
+            {
+                let token_id_clone = token_id.clone();
+                drop(app);
+                spawn_fetch_orderbook(Arc::clone(&app_state), token_id_clone);
+            }
         }
 
         // Handle search debouncing and API calls
@@ -1476,6 +1588,21 @@ pub async fn run_trending_tui(
                                     app.navigation.selected_index = clicked_index;
                                     // Reset markets scroll when changing events
                                     app.scroll.markets = 0;
+
+                                    // Fetch orderbook for the first market of the selected event
+                                    let orderbook_token_id =
+                                        app.selected_event().and_then(|event| {
+                                            event.markets.first().and_then(|market| {
+                                                market
+                                                    .clob_token_ids
+                                                    .as_ref()
+                                                    .and_then(|ids| ids.first().cloned())
+                                            })
+                                        });
+                                    app.orderbook_state.reset();
+                                    if let Some(token_id) = orderbook_token_id {
+                                        spawn_fetch_orderbook(Arc::clone(&app_state), token_id);
+                                    }
 
                                     // Double-click toggles watching (same as Enter)
                                     if is_double_click
@@ -2397,13 +2524,50 @@ pub async fn run_trending_tui(
                             if app.search.mode == SearchMode::ApiSearch {
                                 search_debounce = Some(tokio::time::Instant::now());
                             }
-                        } else if app.main_tab == MainTab::Trending || app.main_tab == MainTab::Favorites {
+                        } else if app.main_tab == MainTab::Trending
+                            || app.main_tab == MainTab::Favorites
+                        {
                             // Cycle sort order for Events tab
                             app.event_sort_by = app.event_sort_by.next();
                             app.sort_events();
                             app.navigation.selected_index = 0;
                             app.scroll.events_list = 0;
                             log_info!("Events sort changed to: {}", app.event_sort_by.label());
+                        }
+                    },
+                    KeyCode::Char('t') => {
+                        // Toggle orderbook Yes/No outcome (or add to search/filter if in input mode)
+                        if app.main_tab == MainTab::Yield && app.yield_state.is_searching {
+                            app.yield_state.add_search_char('t');
+                            yield_search_debounce = Some(tokio::time::Instant::now());
+                        } else if app.main_tab == MainTab::Yield && app.yield_state.is_filtering {
+                            app.yield_state.add_filter_char('t');
+                        } else if app.is_in_filter_mode() {
+                            app.add_search_char('t');
+                            if app.search.mode == SearchMode::ApiSearch {
+                                search_debounce = Some(tokio::time::Instant::now());
+                            }
+                        } else if app.main_tab == MainTab::Trending && !app.has_popup() {
+                            // Toggle orderbook outcome and fetch new data
+                            app.orderbook_state.toggle_outcome();
+                            // token_ids[0] = Yes, token_ids[1] = No
+                            let outcome_idx = match app.orderbook_state.selected_outcome {
+                                state::OrderbookOutcome::Yes => 0,
+                                state::OrderbookOutcome::No => 1,
+                            };
+                            // Trigger orderbook fetch for the new outcome
+                            let orderbook_token_id = app.selected_event().and_then(|event| {
+                                let market_idx = app.orderbook_state.selected_market_index;
+                                event.markets.get(market_idx).and_then(|market| {
+                                    market
+                                        .clob_token_ids
+                                        .as_ref()
+                                        .and_then(|ids| ids.get(outcome_idx).cloned())
+                                })
+                            });
+                            if let Some(token_id) = orderbook_token_id {
+                                spawn_fetch_orderbook(Arc::clone(&app_state), token_id);
+                            }
                         }
                     },
                     KeyCode::Char('r') => {
@@ -2646,10 +2810,7 @@ pub async fn run_trending_tui(
                                 if let Some(opp) = app.yield_state.selected_opportunity() {
                                     let slug = opp.event_slug.clone();
                                     if app.get_cached_event(&slug).is_none() {
-                                        spawn_fetch_event_for_cache(
-                                            Arc::clone(&app_state),
-                                            slug,
-                                        );
+                                        spawn_fetch_event_for_cache(Arc::clone(&app_state), slug);
                                     }
                                 }
                                 continue;
@@ -2725,6 +2886,22 @@ pub async fn run_trending_tui(
                                                     });
                                                 }
                                             }
+
+                                            // Fetch orderbook for the first market's first outcome (Yes)
+                                            let orderbook_token_id =
+                                                event.markets.first().and_then(|market| {
+                                                    market
+                                                        .clob_token_ids
+                                                        .as_ref()
+                                                        .and_then(|ids| ids.first().cloned())
+                                                });
+                                            app.orderbook_state.reset();
+                                            if let Some(token_id) = orderbook_token_id {
+                                                spawn_fetch_orderbook(
+                                                    Arc::clone(&app_state),
+                                                    token_id,
+                                                );
+                                            }
                                         }
                                     }
                                 },
@@ -2768,10 +2945,7 @@ pub async fn run_trending_tui(
                                 if let Some(opp) = app.yield_state.selected_opportunity() {
                                     let slug = opp.event_slug.clone();
                                     if app.get_cached_event(&slug).is_none() {
-                                        spawn_fetch_event_for_cache(
-                                            Arc::clone(&app_state),
-                                            slug,
-                                        );
+                                        spawn_fetch_event_for_cache(Arc::clone(&app_state), slug);
                                     }
                                 }
                                 continue;
@@ -2846,6 +3020,22 @@ pub async fn run_trending_tui(
                                                         }
                                                     });
                                                 }
+                                            }
+
+                                            // Fetch orderbook for the first market's first outcome (Yes)
+                                            let orderbook_token_id =
+                                                event.markets.first().and_then(|market| {
+                                                    market
+                                                        .clob_token_ids
+                                                        .as_ref()
+                                                        .and_then(|ids| ids.first().cloned())
+                                                });
+                                            app.orderbook_state.reset();
+                                            if let Some(token_id) = orderbook_token_id {
+                                                spawn_fetch_orderbook(
+                                                    Arc::clone(&app_state),
+                                                    token_id,
+                                                );
                                             }
                                         }
                                     }

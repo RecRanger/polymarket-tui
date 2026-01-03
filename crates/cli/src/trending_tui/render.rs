@@ -280,7 +280,11 @@ fn build_event_info_lines(
         Line::from(vec![
             Span::styled("Status: ", Style::default().fg(Color::Yellow).bold()),
             Span::styled(
-                if event.active { "Active" } else { "Inactive" },
+                if event.active {
+                    "Active"
+                } else {
+                    "Inactive"
+                },
                 Style::default().fg(if event.active {
                     Color::Green
                 } else {
@@ -289,7 +293,11 @@ fn build_event_info_lines(
             ),
             Span::styled(" | ", Style::default().fg(Color::Gray)),
             Span::styled(
-                if event.closed { "Closed" } else { "Open" },
+                if event.closed {
+                    "Closed"
+                } else {
+                    "Open"
+                },
                 Style::default().fg(if event.closed {
                     Color::Red
                 } else {
@@ -298,7 +306,11 @@ fn build_event_info_lines(
             ),
             Span::styled(" | ", Style::default().fg(Color::Gray)),
             Span::styled(
-                if is_watching { "Watching" } else { "Not Watching" },
+                if is_watching {
+                    "Watching"
+                } else {
+                    "Not Watching"
+                },
                 Style::default().fg(if is_watching {
                     Color::Red
                 } else {
@@ -362,7 +374,10 @@ fn build_event_info_lines(
             // Truncate tags if too long
             lines.push(Line::from(vec![
                 Span::styled("Tags: ", Style::default().fg(Color::Yellow).bold()),
-                Span::styled(truncate(&tags_text, available_width), Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    truncate(&tags_text, available_width),
+                    Style::default().fg(Color::Cyan),
+                ),
             ]));
         }
     }
@@ -778,15 +793,17 @@ fn render_favorites_tab(f: &mut Frame, app: &TrendingAppState, area: Rect) {
 
     // Show empty state
     if favorites_state.events.is_empty() {
-        let empty = Paragraph::new("No favorites yet.\n\nBrowse events in the Events tab and press 'b' to bookmark them.")
-            .block(
-                Block::default()
-                    .title(" Favorites ")
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded),
-            )
-            .alignment(Alignment::Center)
-            .style(Style::default().fg(Color::DarkGray));
+        let empty = Paragraph::new(
+            "No favorites yet.\n\nBrowse events in the Events tab and press 'b' to bookmark them.",
+        )
+        .block(
+            Block::default()
+                .title(" Favorites ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded),
+        )
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(Color::DarkGray));
         f.render_widget(empty, area);
         return;
     }
@@ -853,7 +870,11 @@ fn render_favorites_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             let favorite_icon = "⚑ ";
             let favorite_icon_width = favorite_icon.width();
             let has_yield = !is_closed && event_has_yield(event);
-            let yield_icon = if has_yield { "$ " } else { "" };
+            let yield_icon = if has_yield {
+                "$ "
+            } else {
+                ""
+            };
             let yield_icon_width = yield_icon.width();
 
             // Build right-aligned text: "volume markets"
@@ -894,7 +915,10 @@ fn render_favorites_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             let mut spans = Vec::new();
 
             // Favorite icon (always shown for favorites)
-            spans.push(Span::styled(favorite_icon, Style::default().fg(Color::Magenta)));
+            spans.push(Span::styled(
+                favorite_icon,
+                Style::default().fg(Color::Magenta),
+            ));
 
             // Yield icon if applicable
             if has_yield {
@@ -913,7 +937,11 @@ fn render_favorites_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             if !volume_str.is_empty() {
                 spans.push(Span::styled(
                     volume_str.clone(),
-                    Style::default().fg(if is_closed { Color::DarkGray } else { Color::Green }),
+                    Style::default().fg(if is_closed {
+                        Color::DarkGray
+                    } else {
+                        Color::Green
+                    }),
                 ));
                 spans.push(Span::styled(" ", Style::default()));
             }
@@ -921,7 +949,11 @@ fn render_favorites_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             // Market count (right-aligned)
             spans.push(Span::styled(
                 markets_str,
-                Style::default().fg(if is_closed { Color::DarkGray } else { Color::Cyan }),
+                Style::default().fg(if is_closed {
+                    Color::DarkGray
+                } else {
+                    Color::Cyan
+                }),
             ));
 
             let line = Line::from(spans);
@@ -1325,7 +1357,13 @@ fn render_yield_details(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             let available_width = area.width.saturating_sub(8) as usize; // Account for borders and "URL: " prefix
             let url_lines = (event_url.len() / available_width.max(1)) + 1;
             let has_tags = !event.tags.is_empty();
-            let event_panel_height = 8 + url_lines as u16 + if has_tags { 1 } else { 0 };
+            let event_panel_height = 8
+                + url_lines as u16
+                + if has_tags {
+                    1
+                } else {
+                    0
+                };
 
             // Split into event info and market details
             let chunks = Layout::default()
@@ -1445,7 +1483,10 @@ fn render_yield_details(f: &mut Frame, app: &TrendingAppState, area: Rect) {
                     Style::default().fg(Color::DarkGray),
                 )]),
                 Line::from(vec![Span::styled(
-                    format!("  Profit per share: {}", format_price_cents(1.0 - opp.price)),
+                    format!(
+                        "  Profit per share: {}",
+                        format_price_cents(1.0 - opp.price)
+                    ),
                     Style::default().fg(Color::Green),
                 )]),
                 Line::from(""),
@@ -1494,14 +1535,13 @@ fn render_yield_details(f: &mut Frame, app: &TrendingAppState, area: Rect) {
                 Style::default()
             };
 
-            let event_loading = Paragraph::new("")
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_type(BorderType::Rounded)
-                        .title("Event (Loading...)")
-                        .border_style(event_block_style),
-                );
+            let event_loading = Paragraph::new("").block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .title("Event (Loading...)")
+                    .border_style(event_block_style),
+            );
             f.render_widget(event_loading, chunks[0]);
 
             // Market details panel - show the opportunity info we already have
@@ -1594,7 +1634,10 @@ fn render_yield_details(f: &mut Frame, app: &TrendingAppState, area: Rect) {
                     Style::default().fg(Color::DarkGray),
                 )]),
                 Line::from(vec![Span::styled(
-                    format!("  Profit per share: {}", format_price_cents(1.0 - opp.price)),
+                    format!(
+                        "  Profit per share: {}",
+                        format_price_cents(1.0 - opp.price)
+                    ),
                     Style::default().fg(Color::Green),
                 )]),
                 Line::from(""),
@@ -1640,13 +1683,12 @@ fn render_yield_details(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             .style(Style::default().fg(Color::Gray));
         f.render_widget(event_empty, chunks[0]);
 
-        let market_empty = Paragraph::new("")
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .title("Market Details"),
-            );
+        let market_empty = Paragraph::new("").block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title("Market Details"),
+        );
         f.render_widget(market_empty, chunks[1]);
     }
 }
@@ -1792,8 +1834,7 @@ fn render_yield_search_results(f: &mut Frame, app: &TrendingAppState, area: Rect
                 Cell::from(Line::from(title_spans)),
                 Cell::from(yield_str).style(Style::default().fg(yield_color)),
                 Cell::from(volume_str).style(Style::default().fg(Color::Green)),
-                Cell::from(format!("{}", markets_count))
-                    .style(Style::default().fg(Color::Cyan)),
+                Cell::from(format!("{}", markets_count)).style(Style::default().fg(Color::Cyan)),
                 Cell::from(end_str).style(Style::default().fg(Color::Magenta)),
             ])
             .style(Style::default().bg(bg_color))
@@ -1883,7 +1924,13 @@ fn render_yield_search_details(f: &mut Frame, app: &TrendingAppState, area: Rect
             let available_width = area.width.saturating_sub(8) as usize;
             let url_lines = (event_url.len() / available_width.max(1)) + 1;
             let has_tags = !event.tags.is_empty();
-            let event_panel_height = 8 + url_lines as u16 + if has_tags { 1 } else { 0 };
+            let event_panel_height = 8
+                + url_lines as u16
+                + if has_tags {
+                    1
+                } else {
+                    0
+                };
 
             // Split into event info and yield details
             let chunks = Layout::default()
@@ -2064,14 +2111,13 @@ fn render_yield_search_details(f: &mut Frame, app: &TrendingAppState, area: Rect
                 Style::default()
             };
 
-            let event_loading = Paragraph::new("")
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_type(BorderType::Rounded)
-                        .title("Event (Loading...)")
-                        .border_style(event_block_style),
-                );
+            let event_loading = Paragraph::new("").block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .title("Event (Loading...)")
+                    .border_style(event_block_style),
+            );
             f.render_widget(event_loading, chunks[0]);
 
             // Yield details panel - show best yield info if available
@@ -2182,13 +2228,12 @@ fn render_yield_search_details(f: &mut Frame, app: &TrendingAppState, area: Rect
             .style(Style::default().fg(Color::Gray));
         f.render_widget(event_empty, chunks[0]);
 
-        let yield_empty = Paragraph::new("")
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .title("Yield Details"),
-            );
+        let yield_empty = Paragraph::new("").block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title("Yield Details"),
+        );
         f.render_widget(yield_empty, chunks[1]);
     }
 }
@@ -2270,7 +2315,9 @@ fn build_help_content(app: &TrendingAppState) -> Vec<Line<'static>> {
                 "Events Tab - Line Values:",
                 Style::default().fg(Color::Yellow).bold(),
             )]));
-            lines.push(Line::from("  Each line shows: [icons] Title ... [metric] [markets]"));
+            lines.push(Line::from(
+                "  Each line shows: [icons] Title ... [metric] [markets]",
+            ));
             lines.push(Line::from(""));
             lines.push(Line::from(vec![Span::styled(
                 "  Metric changes with sort (press 's'):",
@@ -2311,7 +2358,9 @@ fn build_help_content(app: &TrendingAppState) -> Vec<Line<'static>> {
                 "Favorites Tab - Line Values:",
                 Style::default().fg(Color::Yellow).bold(),
             )]));
-            lines.push(Line::from("  Each line shows: ⚑ [yield] Title ... [volume] [markets]"));
+            lines.push(Line::from(
+                "  Each line shows: ⚑ [yield] Title ... [volume] [markets]",
+            ));
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
                 Span::styled("  Volume ", Style::default().fg(Color::Green)),
@@ -2322,7 +2371,9 @@ fn build_help_content(app: &TrendingAppState) -> Vec<Line<'static>> {
                 Span::raw("= Number of markets in the event"),
             ]));
             lines.push(Line::from(""));
-            lines.push(Line::from("  Favorites are synced from your Polymarket account."));
+            lines.push(Line::from(
+                "  Favorites are synced from your Polymarket account.",
+            ));
             lines.push(Line::from("  Login with 'L' to sync your favorites."));
         },
         MainTab::Yield => {
@@ -2330,7 +2381,9 @@ fn build_help_content(app: &TrendingAppState) -> Vec<Line<'static>> {
                 "Yield Tab - Line Values:",
                 Style::default().fg(Color::Yellow).bold(),
             )]));
-            lines.push(Line::from("  Each line shows: Event/Market ... [return] [prob] [volume]"));
+            lines.push(Line::from(
+                "  Each line shows: Event/Market ... [return] [prob] [volume]",
+            ));
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
                 Span::styled("  Return ", Style::default().fg(Color::Green)),
@@ -2345,8 +2398,12 @@ fn build_help_content(app: &TrendingAppState) -> Vec<Line<'static>> {
                 Span::raw("= 24h trading volume for the market"),
             ]));
             lines.push(Line::from(""));
-            lines.push(Line::from("  Yield opportunities are markets with >95% probability."));
-            lines.push(Line::from("  Higher return = higher risk (further from 100%)."));
+            lines.push(Line::from(
+                "  Yield opportunities are markets with >95% probability.",
+            ));
+            lines.push(Line::from(
+                "  Higher return = higher risk (further from 100%).",
+            ));
             lines.push(Line::from(""));
             lines.push(Line::from(vec![Span::styled(
                 "  Sort options (press 's'):",
@@ -2365,12 +2422,18 @@ fn build_help_content(app: &TrendingAppState) -> Vec<Line<'static>> {
     )]));
     lines.push(Line::from("  ↑/k, ↓/j  Move up/down in lists"));
     lines.push(Line::from("  Tab       Switch between panels"));
-    lines.push(Line::from("  1-4       Switch tabs (Events/Favorites/Breaking/Yield)"));
+    lines.push(Line::from(
+        "  1-4       Switch tabs (Events/Favorites/Breaking/Yield)",
+    ));
     lines.push(Line::from("  s         Cycle sort options"));
     lines.push(Line::from("  /         API search (searches Polymarket)"));
-    lines.push(Line::from("  f         Local filter (filters current list)"));
+    lines.push(Line::from(
+        "  f         Local filter (filters current list)",
+    ));
     lines.push(Line::from("  o         Open event in browser"));
-    lines.push(Line::from("  Enter     Toggle watching event for live trades"));
+    lines.push(Line::from(
+        "  Enter     Toggle watching event for live trades",
+    ));
     lines.push(Line::from("  L         Login to Polymarket"));
     lines.push(Line::from("  l         Toggle logs panel"));
     lines.push(Line::from("  Esc       Cancel/close"));
@@ -3358,7 +3421,11 @@ fn render_events_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
                         EventSortBy::VolumeTotal => {
                             // Use event's total volume or sum from markets
                             let total_volume = event.volume.unwrap_or_else(|| {
-                                event.markets.iter().map(|m| m.volume_total.unwrap_or(0.0)).sum()
+                                event
+                                    .markets
+                                    .iter()
+                                    .map(|m| m.volume_total.unwrap_or(0.0))
+                                    .sum()
                             });
                             (format_volume(total_volume), Color::Green)
                         },
@@ -3564,13 +3631,13 @@ fn render_trades(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         // Content will scroll if it exceeds this height
         let min_event_details_height = 8; // Minimum height (6 base lines + 2 for borders)
 
-        // Split area into event details, markets, and trades
-        // Use Spacing::Overlap(1) to collapse borders between panels
+        // Split area into event details, markets, orderbook, and trades
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(min_event_details_height as u16), // Event details (minimum height, scrollable)
                 Constraint::Length(7), // Markets panel (5 lines + 2 for borders)
+                Constraint::Length(12), // Order Book panel
                 Constraint::Min(0),    // Trades table
             ])
             .split(area);
@@ -3580,6 +3647,9 @@ fn render_trades(f: &mut Frame, app: &TrendingAppState, area: Rect) {
 
         // Render markets panel
         render_markets(f, app, event, chunks[1]);
+
+        // Render order book panel
+        render_orderbook(f, app, event, chunks[2]);
 
         // Render trades table
         if trades.is_empty() {
@@ -3609,10 +3679,10 @@ fn render_trades(f: &mut Frame, app: &TrendingAppState, area: Rect) {
                 )
                 .alignment(Alignment::Center)
                 .style(Style::default().fg(Color::Gray));
-            f.render_widget(paragraph, chunks[2]);
+            f.render_widget(paragraph, chunks[3]);
         } else {
             // Calculate visible rows and apply scroll
-            let visible_height = (chunks[2].height as usize).saturating_sub(3); // -3 for header
+            let visible_height = (chunks[3].height as usize).saturating_sub(3); // -3 for header
             let total_rows = trades.len();
             let scroll = app
                 .scroll
@@ -3749,9 +3819,9 @@ fn render_trades(f: &mut Frame, app: &TrendingAppState, area: Rect) {
                 if table_state.selected().is_none() {
                     table_state.select(Some(0));
                 }
-                f.render_stateful_widget(table, chunks[2], &mut table_state);
+                f.render_stateful_widget(table, chunks[3], &mut table_state);
             } else {
-                f.render_widget(table, chunks[2]);
+                f.render_widget(table, chunks[3]);
             }
 
             // Render scrollbar for trades if needed
@@ -3765,7 +3835,7 @@ fn render_trades(f: &mut Frame, app: &TrendingAppState, area: Rect) {
                         .orientation(ScrollbarOrientation::VerticalRight)
                         .begin_symbol(Some("↑"))
                         .end_symbol(Some("↓")),
-                    chunks[2],
+                    chunks[3],
                     &mut scrollbar_state,
                 );
             }
@@ -4339,6 +4409,191 @@ fn render_markets(f: &mut Frame, app: &TrendingAppState, event: &Event, area: Re
             area,
             &mut scrollbar_state,
         );
+    }
+}
+
+/// Render the order book panel for the selected market
+fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: Rect) {
+    use crate::trending_tui::state::OrderbookOutcome;
+
+    let orderbook_state = &app.orderbook_state;
+    let selected_outcome = orderbook_state.selected_outcome;
+
+    // Get the selected market
+    let selected_market_idx = orderbook_state
+        .selected_market_index
+        .min(event.markets.len().saturating_sub(1));
+    let market = event.markets.get(selected_market_idx);
+
+    // Build title with Yes/No tabs
+    let yes_style = if selected_outcome == OrderbookOutcome::Yes {
+        Style::default().fg(Color::Green).bold()
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let no_style = if selected_outcome == OrderbookOutcome::No {
+        Style::default().fg(Color::Red).bold()
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    let title = Line::from(vec![
+        Span::raw("Order Book "),
+        Span::styled("[", Style::default().fg(Color::DarkGray)),
+        Span::styled("Yes", yes_style),
+        Span::styled("|", Style::default().fg(Color::DarkGray)),
+        Span::styled("No", no_style),
+        Span::styled("]", Style::default().fg(Color::DarkGray)),
+        Span::raw(" (t: toggle)"),
+    ]);
+
+    let is_focused = app.navigation.focused_panel == FocusedPanel::Markets; // TODO: Add FocusedPanel::Orderbook
+    let block_style = if is_focused {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
+
+    // Check if we have orderbook data
+    if let Some(ref orderbook) = orderbook_state.orderbook {
+        // Split area into two columns: depth chart (left) and price levels (right)
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(25), // Depth chart
+                Constraint::Percentage(75), // Price levels
+            ])
+            .split(area);
+
+        // Render depth chart placeholder (left side)
+        let depth_block = Block::default()
+            .borders(Borders::LEFT | Borders::TOP | Borders::BOTTOM)
+            .border_type(BorderType::Rounded)
+            .title(title)
+            .border_style(block_style);
+
+        // Simple depth visualization using bars
+        let visible_height = (chunks[0].height as usize).saturating_sub(2);
+        let mut depth_lines: Vec<Line> = Vec::new();
+
+        // Show asks (sell orders) in red at the top
+        let asks_to_show = orderbook.asks.iter().take(visible_height / 2).rev();
+        for level in asks_to_show {
+            let bar_width = ((level.size / 500.0) * 20.0).min(20.0) as usize;
+            let bar = "█".repeat(bar_width.max(1));
+            depth_lines.push(Line::from(vec![Span::styled(
+                bar,
+                Style::default().fg(Color::LightRed),
+            )]));
+        }
+
+        // Add spread line
+        if let Some(spread) = orderbook.spread {
+            depth_lines.push(Line::from(vec![Span::styled(
+                format!("Spread: {:.1}¢", spread * 100.0),
+                Style::default().fg(Color::Yellow),
+            )]));
+        }
+
+        // Show bids (buy orders) in green at the bottom
+        let bids_to_show = orderbook.bids.iter().take(visible_height / 2);
+        for level in bids_to_show {
+            let bar_width = ((level.size / 500.0) * 20.0).min(20.0) as usize;
+            let bar = "█".repeat(bar_width.max(1));
+            depth_lines.push(Line::from(vec![Span::styled(
+                bar,
+                Style::default().fg(Color::LightGreen),
+            )]));
+        }
+
+        let depth_para = Paragraph::new(depth_lines).block(depth_block);
+        f.render_widget(depth_para, chunks[0]);
+
+        // Render price levels (right side)
+        let levels_block = Block::default()
+            .borders(Borders::RIGHT | Borders::TOP | Borders::BOTTOM)
+            .border_type(BorderType::Rounded)
+            .border_style(block_style);
+
+        let visible_rows = (chunks[1].height as usize).saturating_sub(2);
+        let mut level_lines: Vec<Line> = Vec::new();
+
+        // Header
+        level_lines.push(Line::from(vec![
+            Span::styled("  PRICE    ", Style::default().fg(Color::DarkGray).bold()),
+            Span::styled("SHARES     ", Style::default().fg(Color::DarkGray).bold()),
+            Span::styled("TOTAL", Style::default().fg(Color::DarkGray).bold()),
+        ]));
+
+        // Asks (sell orders) - show in descending price order
+        let asks_count = (visible_rows.saturating_sub(2)) / 2;
+        for level in orderbook.asks.iter().take(asks_count).rev() {
+            level_lines.push(Line::from(vec![
+                Span::styled(
+                    format!("  {:>5.0}¢   ", level.price * 100.0),
+                    Style::default().fg(Color::LightRed),
+                ),
+                Span::styled(
+                    format!("{:>8.2}   ", level.size),
+                    Style::default().fg(Color::White),
+                ),
+                Span::styled(
+                    format!("${:.2}", level.total),
+                    Style::default().fg(Color::White),
+                ),
+            ]));
+        }
+
+        // Spread separator
+        if let Some(spread) = orderbook.spread {
+            level_lines.push(Line::from(vec![Span::styled(
+                format!("  ─── Spread: {:.1}¢ ───", spread * 100.0),
+                Style::default().fg(Color::Yellow),
+            )]));
+        }
+
+        // Bids (buy orders)
+        let bids_count = visible_rows.saturating_sub(level_lines.len());
+        for level in orderbook.bids.iter().take(bids_count) {
+            level_lines.push(Line::from(vec![
+                Span::styled(
+                    format!("  {:>5.0}¢   ", level.price * 100.0),
+                    Style::default().fg(Color::LightGreen),
+                ),
+                Span::styled(
+                    format!("{:>8.2}   ", level.size),
+                    Style::default().fg(Color::White),
+                ),
+                Span::styled(
+                    format!("${:.2}", level.total),
+                    Style::default().fg(Color::White),
+                ),
+            ]));
+        }
+
+        let levels_para = Paragraph::new(level_lines).block(levels_block);
+        f.render_widget(levels_para, chunks[1]);
+    } else {
+        // No orderbook data - show loading or select market message
+        let message = if orderbook_state.is_loading {
+            "Loading orderbook..."
+        } else if market.is_some() {
+            "Select a market to view orderbook"
+        } else {
+            "No markets available"
+        };
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title(title)
+            .border_style(block_style);
+
+        let paragraph = Paragraph::new(message)
+            .block(block)
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::DarkGray));
+        f.render_widget(paragraph, area);
     }
 }
 
