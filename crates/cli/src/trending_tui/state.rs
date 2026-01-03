@@ -1195,6 +1195,8 @@ impl TrendingAppState {
     pub fn exit_search_mode(&mut self) {
         self.search.mode = SearchMode::None;
         self.search.query.clear();
+        self.search.results.clear();
+        self.search.last_searched_query.clear();
         self.navigation.selected_index = 0;
         self.scroll.events_list = 0;
     }
