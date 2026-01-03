@@ -1629,6 +1629,101 @@ pub async fn run_trending_tui(
                         continue;
                     }
 
+                    // Check for orderbook title tab clicks (Yes/No toggle)
+                    // Only for Trending/Breaking/Favorites tabs, not Yield
+                    if app.main_tab != MainTab::Yield {
+                        // Calculate orderbook area using same layout as render.rs
+                        let header_height: u16 = if app.is_in_filter_mode() {
+                            5
+                        } else {
+                            2
+                        };
+                        let main_area_y = header_height;
+                        let _main_area_height = size
+                            .height
+                            .saturating_sub(header_height)
+                            .saturating_sub(if app.show_logs {
+                                11
+                            } else {
+                                3
+                            });
+
+                        // Right side starts at 40% of width
+                        let right_x = size.width * 40 / 100;
+                        let right_width = size.width - right_x;
+
+                        // Orderbook is after: event details (8) + markets (7) = 15 rows from main_area_y
+                        let orderbook_y = main_area_y + 8 + 7;
+                        let orderbook_height: u16 = 16; // Fixed height as per calculate_orderbook_height
+
+                        let orderbook_area =
+                            Rect::new(right_x, orderbook_y, right_width, orderbook_height);
+
+                        // Get outcome names for the selected market
+                        let outcome_names: Option<(String, String)> =
+                            app.selected_event().and_then(|event| {
+                                let mut sorted_markets: Vec<_> = event.markets.iter().collect();
+                                sorted_markets.sort_by_key(|m| m.closed);
+                                let idx = app
+                                    .orderbook_state
+                                    .selected_market_index
+                                    .min(sorted_markets.len().saturating_sub(1));
+                                sorted_markets.get(idx).map(|m| {
+                                    let name_0 = m
+                                        .outcomes
+                                        .first()
+                                        .cloned()
+                                        .unwrap_or_else(|| "Yes".to_string());
+                                    let name_1 = m
+                                        .outcomes
+                                        .get(1)
+                                        .cloned()
+                                        .unwrap_or_else(|| "No".to_string());
+                                    (name_0, name_1)
+                                })
+                            });
+
+                        if let Some((name_0, name_1)) = outcome_names
+                            && let Some(clicked_outcome) = render::check_orderbook_title_click(
+                                mouse.column,
+                                mouse.row,
+                                orderbook_area,
+                                &name_0,
+                                &name_1,
+                            )
+                        {
+                            if app.orderbook_state.selected_outcome != clicked_outcome {
+                                app.orderbook_state.selected_outcome = clicked_outcome;
+                                app.orderbook_state.orderbook = None;
+
+                                // Fetch orderbook for the new outcome
+                                if let Some(event) = app.selected_event() {
+                                    let mut sorted_markets: Vec<_> = event.markets.iter().collect();
+                                    sorted_markets.sort_by_key(|m| m.closed);
+                                    let idx = app
+                                        .orderbook_state
+                                        .selected_market_index
+                                        .min(sorted_markets.len().saturating_sub(1));
+                                    if let Some(market) = sorted_markets.get(idx) {
+                                        let outcome_idx = match clicked_outcome {
+                                            state::OrderbookOutcome::Yes => 0,
+                                            state::OrderbookOutcome::No => 1,
+                                        };
+                                        if let Some(token_id) = market
+                                            .clob_token_ids
+                                            .as_ref()
+                                            .and_then(|ids| ids.get(outcome_idx).cloned())
+                                        {
+                                            drop(app);
+                                            spawn_fetch_orderbook(Arc::clone(&app_state), token_id);
+                                        }
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+                    }
+
                     let (_, events_list_area, ..) = calculate_panel_areas(
                         size,
                         app.is_in_filter_mode(),

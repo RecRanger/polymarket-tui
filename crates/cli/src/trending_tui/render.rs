@@ -4708,6 +4708,45 @@ fn render_markets(f: &mut Frame, app: &TrendingAppState, event: &Event, area: Re
     }
 }
 
+/// Check if a click on the orderbook panel title should toggle the outcome
+/// Returns Some(OrderbookOutcome) if a tab was clicked, None otherwise
+/// The title format is: "Order Book: {name0} - {name1}" starting at area.x + 1 (after border)
+pub fn check_orderbook_title_click(
+    click_x: u16,
+    click_y: u16,
+    orderbook_area: Rect,
+    outcome_0_name: &str,
+    outcome_1_name: &str,
+) -> Option<crate::trending_tui::state::OrderbookOutcome> {
+    use crate::trending_tui::state::OrderbookOutcome;
+
+    // Check if click is on the title row (first row of the panel, which is the border with title)
+    if click_y != orderbook_area.y {
+        return None;
+    }
+
+    // Title starts after the border character and "Order Book: " prefix
+    // Format: "╭Order Book: Yes - No───..."
+    // Position: border(1) + "Order Book: "(12) = 13 chars before first outcome name
+    let title_start_x = orderbook_area.x + 1; // After left border
+    let prefix_len = 12; // "Order Book: "
+    let name_0_start = title_start_x + prefix_len as u16;
+    let name_0_len = outcome_0_name.chars().count().min(10) as u16; // truncated to 10
+    let name_0_end = name_0_start + name_0_len;
+    let separator_len = 3u16; // " - "
+    let name_1_start = name_0_end + separator_len;
+    let name_1_len = outcome_1_name.chars().count().min(10) as u16;
+    let name_1_end = name_1_start + name_1_len;
+
+    if click_x >= name_0_start && click_x < name_0_end {
+        Some(OrderbookOutcome::Yes)
+    } else if click_x >= name_1_start && click_x < name_1_end {
+        Some(OrderbookOutcome::No)
+    } else {
+        None
+    }
+}
+
 /// Render the order book panel for the selected market
 fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: Rect) {
     use crate::trending_tui::state::OrderbookOutcome;
@@ -4740,27 +4779,41 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
         ("Yes".to_string(), "No".to_string())
     };
 
-    // Build title based on available width
-    // For the depth chart panel (25% of area), we need a shorter title
-    let depth_panel_width = (area.width as usize) / 4;
-    let max_name_len = depth_panel_width.saturating_sub(18); // Leave room for "Order Book:  (t)" and borders
-    let selected_name = if selected_outcome == OrderbookOutcome::Yes {
-        truncate(&outcome_0_name, max_name_len.max(3))
-    } else {
-        truncate(&outcome_1_name, max_name_len.max(3))
-    };
-    // Consistent title format: "Order Book: {name} (t)" for both states
-    let short_title = format!("Order Book: {} (t)", selected_name);
+    // Build title with clickable tabs like lazygit: "Order Book: Yes - No"
+    // The selected outcome is highlighted, unselected is dimmed
+    let truncated_name_0 = truncate(&outcome_0_name, 10);
+    let truncated_name_1 = truncate(&outcome_1_name, 10);
 
-    // For the full-width panel (when no orders), we can show more
-    let full_title = format!(
-        "Order Book: {} (t)",
+    let title_line = Line::from(vec![
+        Span::raw("Order Book: "),
         if selected_outcome == OrderbookOutcome::Yes {
-            truncate(&outcome_0_name, 20)
+            Span::styled(
+                truncated_name_0.clone(),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )
         } else {
-            truncate(&outcome_1_name, 20)
-        }
-    );
+            Span::styled(
+                truncated_name_0.clone(),
+                Style::default().fg(Color::DarkGray),
+            )
+        },
+        Span::styled(" - ", Style::default().fg(Color::DarkGray)),
+        if selected_outcome == OrderbookOutcome::No {
+            Span::styled(
+                truncated_name_1.clone(),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::styled(
+                truncated_name_1.clone(),
+                Style::default().fg(Color::DarkGray),
+            )
+        },
+    ]);
 
     let is_focused = app.navigation.focused_panel == FocusedPanel::Markets; // TODO: Add FocusedPanel::Orderbook
     let block_style = if is_focused {
@@ -4797,7 +4850,7 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
         let depth_block = Block::default()
             .borders(Borders::LEFT | Borders::TOP | Borders::BOTTOM)
             .border_type(BorderType::Rounded)
-            .title(short_title)
+            .title(title_line.clone())
             .border_style(block_style);
 
         // Calculate row counts based on available data (up to 6 per side like website)
@@ -4967,7 +5020,7 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .title(full_title)
+            .title(title_line)
             .border_style(block_style);
 
         let paragraph = Paragraph::new(message)
