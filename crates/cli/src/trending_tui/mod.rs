@@ -2175,7 +2175,13 @@ pub async fn run_trending_tui(
                                 app.yield_state.enter_search_mode();
                                 log_info!("Entered yield search mode");
                             }
-                        } else if !app.is_in_filter_mode() && !app.has_popup() {
+                        } else if app.is_in_filter_mode() {
+                            // Already in search/filter mode, add '/' to query
+                            app.add_search_char('/');
+                            if app.search.mode == SearchMode::ApiSearch {
+                                search_debounce = Some(tokio::time::Instant::now());
+                            }
+                        } else if !app.has_popup() {
                             // API search in Trending/Favorites tab from any panel
                             app.enter_search_mode();
                         }
@@ -2194,7 +2200,13 @@ pub async fn run_trending_tui(
                                 // Already filtering, add 'f' to filter query
                                 app.yield_state.add_filter_char('f');
                             }
-                        } else if !app.is_in_filter_mode() && !app.has_popup() {
+                        } else if app.is_in_filter_mode() {
+                            // Already in search/filter mode, add 'f' to query
+                            app.add_search_char('f');
+                            if app.search.mode == SearchMode::ApiSearch {
+                                search_debounce = Some(tokio::time::Instant::now());
+                            }
+                        } else if !app.has_popup() {
                             // Local filter in Trending/Favorites tab from any panel
                             app.enter_local_filter_mode();
                         }
