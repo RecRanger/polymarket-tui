@@ -1844,6 +1844,101 @@ pub async fn run_trending_tui(
                                 if clicked_index < total_items {
                                     app.yield_state.selected_index = clicked_index;
                                 }
+                            } else if app.main_tab == MainTab::Favorites {
+                                // Favorites tab: select favorite event
+                                // Account for border (1) = 1
+                                let relative_y = mouse.row.saturating_sub(events_list_area.y + 1);
+                                let clicked_index =
+                                    app.favorites_state.scroll + relative_y as usize;
+                                let favorites_len = app.favorites_state.events.len();
+
+                                if clicked_index < favorites_len {
+                                    app.favorites_state.selected_index = clicked_index;
+                                    // Reset markets scroll when changing events
+                                    app.scroll.markets = 0;
+
+                                    // Fetch orderbook for the first market of the selected favorite event
+                                    let orderbook_info: Option<(String, bool)> =
+                                        app.favorites_state.selected_event().and_then(|event| {
+                                            let mut sorted: Vec<_> = event.markets.iter().collect();
+                                            sorted.sort_by_key(|m| m.closed);
+                                            sorted.first().and_then(|market| {
+                                                market.clob_token_ids.as_ref().and_then(|ids| {
+                                                    ids.first()
+                                                        .cloned()
+                                                        .map(|id| (id, !market.closed))
+                                                })
+                                            })
+                                        });
+                                    app.orderbook_state.reset();
+                                    if let Some((token_id, is_active)) = orderbook_info {
+                                        spawn_fetch_orderbook(
+                                            Arc::clone(&app_state),
+                                            token_id,
+                                            is_active,
+                                        );
+                                    }
+
+                                    // Double-click toggles watching (same as Enter)
+                                    if is_double_click
+                                        && let Some(event) =
+                                            app.favorites_state.selected_event().cloned()
+                                    {
+                                        let event_slug = event.slug.clone();
+                                        if app.is_watching(&event_slug) {
+                                            // Stop watching
+                                            app.stop_watching(&event_slug);
+                                        } else {
+                                            // Start watching
+                                            let event_slug_clone = event_slug.clone();
+
+                                            app.trades
+                                                .event_trades
+                                                .entry(event_slug_clone.clone())
+                                                .or_insert_with(EventTrades::new);
+
+                                            let app_state_ws = Arc::clone(&app_state);
+                                            let event_slug_for_closure = event_slug_clone.clone();
+
+                                            let rtds_client = RTDSClient::new()
+                                                .with_event_slug(event_slug_clone.clone());
+
+                                            log_info!(
+                                                "Starting RTDS WebSocket for event: {}",
+                                                event_slug_clone
+                                            );
+
+                                            let ws_handle = tokio::spawn(async move {
+                                                match rtds_client
+                                                    .connect_and_listen(move |msg| {
+                                                        let app_state = Arc::clone(&app_state_ws);
+                                                        let event_slug =
+                                                            event_slug_for_closure.clone();
+
+                                                        tokio::spawn(async move {
+                                                            let mut app = app_state.lock().await;
+                                                            if let Some(event_trades) = app
+                                                                .trades
+                                                                .event_trades
+                                                                .get_mut(&event_slug)
+                                                            {
+                                                                event_trades.add_trade(&msg);
+                                                            }
+                                                        });
+                                                    })
+                                                    .await
+                                                {
+                                                    Ok(()) => {},
+                                                    Err(_e) => {
+                                                        log_error!("RTDS WebSocket error: {}", _e);
+                                                    },
+                                                }
+                                            });
+
+                                            app.start_watching(event_slug_clone, ws_handle);
+                                        }
+                                    }
+                                }
                             } else {
                                 // Trending tab: select event (List widget, no header row)
                                 // Account for border (1) = 1
