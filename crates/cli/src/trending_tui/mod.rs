@@ -499,6 +499,33 @@ fn spawn_toggle_favorite(
     });
 }
 
+/// Spawn async task to fetch event by slug and then toggle favorite
+/// Used when event is not in cache (e.g., from Yield tab)
+fn spawn_fetch_and_toggle_favorite(
+    app_state: Arc<TokioMutex<TrendingAppState>>,
+    event_slug: String,
+) {
+    use polymarket_api::GammaClient;
+
+    tokio::spawn(async move {
+        let gamma_client = GammaClient::new();
+
+        // Fetch the event by slug to get its ID
+        match gamma_client.get_event_by_slug(&event_slug).await {
+            Ok(Some(event)) => {
+                log_info!("Fetched event for bookmark: {}", event.slug);
+                spawn_toggle_favorite(app_state, event.id.clone(), event.slug.clone(), Some(event));
+            },
+            Ok(None) => {
+                log_error!("Event not found: {}", event_slug);
+            },
+            Err(e) => {
+                log_error!("Failed to fetch event {}: {}", event_slug, e);
+            },
+        }
+    });
+}
+
 /// Fetch trade count for an event's markets using authenticated CLOB API
 /// Returns total number of trades across all markets in the event
 async fn fetch_event_trade_count(
@@ -2088,47 +2115,53 @@ pub async fn run_trending_tui(
                             }
                         } else if !app.has_popup() && app.auth_state.is_authenticated {
                             // Get the event to toggle based on current tab
-                            let event_info: Option<(
-                                String,
-                                String,
-                                Option<polymarket_api::gamma::Event>,
-                            )> = match app.main_tab {
-                                MainTab::Trending | MainTab::Favorites => app
-                                    .selected_event()
-                                    .map(|e| (e.id.clone(), e.slug.clone(), Some(e.clone()))),
+                            match app.main_tab {
+                                MainTab::Trending | MainTab::Favorites => {
+                                    if let Some(e) = app.selected_event() {
+                                        spawn_toggle_favorite(
+                                            Arc::clone(&app_state),
+                                            e.id.clone(),
+                                            e.slug.clone(),
+                                            Some(e.clone()),
+                                        );
+                                    }
+                                },
                                 MainTab::Yield => {
                                     // For yield tab, get event_slug from selected opportunity
                                     // We need to fetch the event to get the ID
                                     if let Some(opp) = app.yield_state.selected_opportunity() {
-                                        // We have the slug but need the event_id
+                                        let event_slug = opp.event_slug.clone();
                                         // Try to find it in the events cache or favorites
-                                        let event_id = app
+                                        let cached_event = app
                                             .events
                                             .iter()
-                                            .find(|e| e.slug == opp.event_slug)
-                                            .map(|e| e.id.clone())
+                                            .find(|e| e.slug == event_slug)
+                                            .cloned()
                                             .or_else(|| {
                                                 app.favorites_state
                                                     .events
                                                     .iter()
-                                                    .find(|e| e.slug == opp.event_slug)
-                                                    .map(|e| e.id.clone())
+                                                    .find(|e| e.slug == event_slug)
+                                                    .cloned()
                                             });
-                                        event_id.map(|id| (id, opp.event_slug.clone(), None))
-                                    } else {
-                                        None
+
+                                        if let Some(event) = cached_event {
+                                            spawn_toggle_favorite(
+                                                Arc::clone(&app_state),
+                                                event.id.clone(),
+                                                event.slug.clone(),
+                                                Some(event),
+                                            );
+                                        } else {
+                                            // Event not in cache, fetch it first then toggle
+                                            spawn_fetch_and_toggle_favorite(
+                                                Arc::clone(&app_state),
+                                                event_slug,
+                                            );
+                                        }
                                     }
                                 },
                             };
-
-                            if let Some((event_id, event_slug, event)) = event_info {
-                                spawn_toggle_favorite(
-                                    Arc::clone(&app_state),
-                                    event_id,
-                                    event_slug,
-                                    event,
-                                );
-                            }
                         }
                     },
                     KeyCode::Char('/') => {
