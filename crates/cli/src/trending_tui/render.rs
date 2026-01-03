@@ -2681,7 +2681,7 @@ fn render_login_popup(f: &mut Frame, app: &TrendingAppState) {
 
 /// Render user profile popup
 fn render_user_profile_popup(f: &mut Frame, app: &TrendingAppState) {
-    let area = centered_rect(70, 60, f.area());
+    let area = centered_rect(50, 60, f.area());
     f.render_widget(Clear, area);
 
     let auth = &app.auth_state;
