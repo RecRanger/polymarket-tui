@@ -4710,10 +4710,9 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
         let orderbook = orderbook_state.orderbook.as_ref().unwrap();
 
         // Find max cumulative total for scaling the depth bars
-        // Use the last (deepest) level's cumulative total for each side
+        // Scale each side (bids/asks) independently for better visualization
         let max_bid_total = orderbook.bids.last().map(|l| l.total).unwrap_or(0.0);
         let max_ask_total = orderbook.asks.last().map(|l| l.total).unwrap_or(0.0);
-        let max_total = max_bid_total.max(max_ask_total);
 
         // Split area into two columns: depth chart (left) and price levels (right)
         let chunks = Layout::default()
@@ -4738,10 +4737,11 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
 
         // Show asks (sell orders) in red at the top - bars grow from right to left
         // Reversed so highest price (deepest) is at top, best ask at bottom
+        // Scale asks relative to max_ask_total for proper visualization
         let asks_to_show: Vec<_> = orderbook.asks.iter().take(visible_height / 2).collect();
         for level in asks_to_show.iter().rev() {
-            let bar_width = if max_total > 0.0 {
-                ((level.total / max_total) * bar_max_width as f64).max(1.0) as usize
+            let bar_width = if max_ask_total > 0.0 {
+                ((level.total / max_ask_total) * bar_max_width as f64).max(1.0) as usize
             } else {
                 1
             };
@@ -4757,10 +4757,11 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
 
         // Show bids (buy orders) in green at the bottom
         // Best bid at top, lowest bid at bottom
+        // Scale bids relative to max_bid_total for proper visualization
         let bids_to_show = orderbook.bids.iter().take(visible_height / 2);
         for level in bids_to_show {
-            let bar_width = if max_total > 0.0 {
-                ((level.total / max_total) * bar_max_width as f64).max(1.0) as usize
+            let bar_width = if max_bid_total > 0.0 {
+                ((level.total / max_bid_total) * bar_max_width as f64).max(1.0) as usize
             } else {
                 1
             };
