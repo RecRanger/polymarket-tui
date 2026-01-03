@@ -4435,22 +4435,33 @@ fn render_markets(f: &mut Frame, app: &TrendingAppState, event: &Event, area: Re
                 (None, None)
             };
 
-            // Build Buy buttons for active markets
-            let yes_button = if !market.closed {
-                let price_str = yes_price
+            // Build Buy buttons for active markets using actual outcome names
+            let (yes_button, no_button) = if !market.closed {
+                let yes_price_str = yes_price
                     .map(format_price_cents)
                     .unwrap_or_else(|| "N/A".to_string());
-                format!("[Yes {}]", price_str)
-            } else {
-                String::new()
-            };
-            let no_button = if !market.closed {
-                let price_str = no_price
+                let no_price_str = no_price
                     .map(format_price_cents)
                     .unwrap_or_else(|| "N/A".to_string());
-                format!("[No {}]", price_str)
+
+                // Get outcome names, truncate to max 8 chars to keep buttons reasonable
+                let outcome_0 = market
+                    .outcomes
+                    .first()
+                    .map(|s| truncate(s, 8))
+                    .unwrap_or_else(|| "Yes".to_string());
+                let outcome_1 = market
+                    .outcomes
+                    .get(1)
+                    .map(|s| truncate(s, 8))
+                    .unwrap_or_else(|| "No".to_string());
+
+                (
+                    format!("[{} {}]", outcome_0, yes_price_str),
+                    format!("[{} {}]", outcome_1, no_price_str),
+                )
             } else {
-                String::new()
+                (String::new(), String::new())
             };
 
             // Calculate widths for right alignment
@@ -4675,19 +4686,20 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
     };
 
     // Build title based on available width
-    // For the depth chart panel (25% of area), we need a very short title
+    // For the depth chart panel (25% of area), we need a shorter title
     let depth_panel_width = (area.width as usize) / 4;
-    let max_name_len = depth_panel_width.saturating_sub(8); // Leave room for " (t)" and borders
+    let max_name_len = depth_panel_width.saturating_sub(18); // Leave room for "Order Book:  (t)" and borders
     let selected_name = if selected_outcome == OrderbookOutcome::Yes {
         truncate(&outcome_0_name, max_name_len.max(3))
     } else {
         truncate(&outcome_1_name, max_name_len.max(3))
     };
-    let short_title = format!("{} (t)", selected_name);
+    // Consistent title format: "Order Book: {name} (t)" for both states
+    let short_title = format!("Order Book: {} (t)", selected_name);
 
     // For the full-width panel (when no orders), we can show more
     let full_title = format!(
-        "Order Book: {} (t: toggle)",
+        "Order Book: {} (t)",
         if selected_outcome == OrderbookOutcome::Yes {
             truncate(&outcome_0_name, 20)
         } else {

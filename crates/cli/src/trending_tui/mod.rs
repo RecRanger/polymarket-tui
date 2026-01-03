@@ -1794,9 +1794,22 @@ pub async fn run_trending_tui(
                                             .map(render::format_price_cents)
                                             .unwrap_or_else(|| "N/A".to_string());
 
-                                        // Button format: "[Yes XX¢] [No XX¢]"
-                                        let yes_button = format!("[Yes {}]", yes_price_str);
-                                        let no_button = format!("[No {}]", no_price_str);
+                                        // Get outcome names, truncate to max 8 chars (same as render)
+                                        let outcome_0 = market
+                                            .outcomes
+                                            .first()
+                                            .map(|s| render::truncate(s, 8))
+                                            .unwrap_or_else(|| "Yes".to_string());
+                                        let outcome_1 = market
+                                            .outcomes
+                                            .get(1)
+                                            .map(|s| render::truncate(s, 8))
+                                            .unwrap_or_else(|| "No".to_string());
+
+                                        // Button format: "[{outcome} XX¢]"
+                                        let yes_button =
+                                            format!("[{} {}]", outcome_0, yes_price_str);
+                                        let no_button = format!("[{} {}]", outcome_1, no_price_str);
                                         let yes_button_width = yes_button.len() as u16;
                                         let no_button_width = no_button.len() as u16;
 
