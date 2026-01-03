@@ -4730,8 +4730,20 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
             .title(short_title)
             .border_style(block_style);
 
+        // Calculate row counts ONCE for both depth chart and price levels
+        // visible_rows = panel height - 2 (for borders)
+        // We need: 1 header + asks_count + 1 spread + bids_count = visible_rows
+        // So asks_count + bids_count = visible_rows - 2
+        // Split evenly, with preference for showing up to 6 per side like the website
+        let visible_rows = (chunks[1].height as usize).saturating_sub(2);
+        let available_for_orders = visible_rows.saturating_sub(2); // subtract header and spread
+        let half = available_for_orders / 2;
+        // Show up to 6 rows per side (like website), but limited by available space and data
+        let target_per_side = half.min(6);
+        let asks_count = target_per_side.min(orderbook.asks.len());
+        let bids_count = target_per_side.min(orderbook.bids.len());
+
         // Depth visualization using bars scaled to max cumulative total
-        let visible_height = (chunks[0].height as usize).saturating_sub(2);
         let bar_max_width = (chunks[0].width as usize).saturating_sub(2);
         let mut depth_lines: Vec<Line> = Vec::new();
 
@@ -4741,7 +4753,7 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
         // Show asks (sell orders) in red at the top - bars grow from right to left
         // Reversed so highest price (deepest) is at top, best ask at bottom
         // Scale asks relative to max_ask_total for proper visualization
-        let asks_to_show: Vec<_> = orderbook.asks.iter().take(visible_height / 2).collect();
+        let asks_to_show: Vec<_> = orderbook.asks.iter().take(asks_count).collect();
         for level in asks_to_show.iter().rev() {
             let bar_width = if max_ask_total > 0.0 {
                 ((level.total / max_ask_total) * bar_max_width as f64).max(1.0) as usize
@@ -4761,8 +4773,7 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
         // Show bids (buy orders) in green at the bottom
         // Best bid at top, lowest bid at bottom
         // Scale bids relative to max_bid_total for proper visualization
-        let bids_to_show = orderbook.bids.iter().take(visible_height / 2);
-        for level in bids_to_show {
+        for level in orderbook.bids.iter().take(bids_count) {
             let bar_width = if max_bid_total > 0.0 {
                 ((level.total / max_bid_total) * bar_max_width as f64).max(1.0) as usize
             } else {
@@ -4784,7 +4795,7 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
             .border_type(BorderType::Rounded)
             .border_style(block_style);
 
-        let visible_rows = (chunks[1].height as usize).saturating_sub(2);
+        // visible_rows already calculated above for synchronization with depth chart
         let panel_width = (chunks[1].width as usize).saturating_sub(2); // Account for border
 
         // Fixed column widths for alignment
@@ -4851,8 +4862,7 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
                 Line::from(vec![padding_span, price_span, shares_span, total_span])
             };
 
-        // Asks (sell orders) - show in descending price order
-        let asks_count = (visible_rows.saturating_sub(2)) / 2;
+        // Asks (sell orders) - show in descending price order (same count as depth chart)
         for level in orderbook.asks.iter().take(asks_count).rev() {
             level_lines.push(format_level(level, Color::LightRed));
         }
@@ -4877,8 +4887,7 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
             )]));
         }
 
-        // Bids (buy orders)
-        let bids_count = visible_rows.saturating_sub(level_lines.len());
+        // Bids (buy orders) - same count as depth chart
         for level in orderbook.bids.iter().take(bids_count) {
             level_lines.push(format_level(level, Color::LightGreen));
         }
