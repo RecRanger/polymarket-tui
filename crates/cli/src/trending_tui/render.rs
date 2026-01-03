@@ -4442,27 +4442,13 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
         ("Yes".to_string(), "No".to_string())
     };
 
-    // Build title with outcome tabs (use actual outcome names from market)
-    let first_style = if selected_outcome == OrderbookOutcome::Yes {
-        Style::default().fg(Color::Green).bold()
+    // Build a simple title string showing selected outcome
+    let selected_name = if selected_outcome == OrderbookOutcome::Yes {
+        &outcome_0_name
     } else {
-        Style::default().fg(Color::DarkGray)
+        &outcome_1_name
     };
-    let second_style = if selected_outcome == OrderbookOutcome::No {
-        Style::default().fg(Color::Red).bold()
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
-
-    let title = Line::from(vec![
-        Span::raw("Order Book "),
-        Span::styled("[", Style::default().fg(Color::DarkGray)),
-        Span::styled(outcome_0_name, first_style),
-        Span::styled("|", Style::default().fg(Color::DarkGray)),
-        Span::styled(outcome_1_name, second_style),
-        Span::styled("]", Style::default().fg(Color::DarkGray)),
-        Span::raw(" (t: toggle)"),
-    ]);
+    let title = format!("Order Book: {} (t: toggle)", selected_name);
 
     let is_focused = app.navigation.focused_panel == FocusedPanel::Markets; // TODO: Add FocusedPanel::Orderbook
     let block_style = if is_focused {
@@ -4471,8 +4457,15 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
         Style::default()
     };
 
-    // Check if we have orderbook data
-    if let Some(ref orderbook) = orderbook_state.orderbook {
+    // Check if we have orderbook data with actual orders
+    let has_orders = orderbook_state
+        .orderbook
+        .as_ref()
+        .map(|ob| !ob.bids.is_empty() || !ob.asks.is_empty())
+        .unwrap_or(false);
+
+    if has_orders {
+        let orderbook = orderbook_state.orderbook.as_ref().unwrap();
         // Split area into two columns: depth chart (left) and price levels (right)
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -4591,11 +4584,14 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
         let levels_para = Paragraph::new(level_lines).block(levels_block);
         f.render_widget(levels_para, chunks[1]);
     } else {
-        // No orderbook data - show loading or select market message
+        // No orderbook data or empty orderbook - show appropriate message
         let message = if orderbook_state.is_loading {
             "Loading orderbook..."
+        } else if orderbook_state.orderbook.is_some() {
+            // We have an orderbook but it's empty (no orders)
+            "No orders in orderbook"
         } else if market.is_some() {
-            "Select a market to view orderbook"
+            "Loading orderbook..."
         } else {
             "No markets available"
         };
