@@ -315,10 +315,7 @@ pub fn render_events_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             .position(scroll)
             .viewport_content_length(visible_height);
         f.render_stateful_widget(
-            Scrollbar::default()
-                .orientation(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(Some("↑"))
-                .end_symbol(Some("↓")),
+            Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight),
             area,
             &mut scrollbar_state,
         );

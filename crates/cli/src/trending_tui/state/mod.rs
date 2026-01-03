@@ -38,7 +38,7 @@ pub use {
     pagination::PaginationState,
     popup::PopupType,
     search::{SearchMode, SearchState},
-    trade::{EventTrades, Trade, TradeField, TradeFormState, TradeSide},
+    trade::{EventTrades, OrderType, OutcomeInfo, Trade, TradeField, TradeFormState, TradeSide},
     trades_ws::TradesState,
     yield_state::{YieldOpportunity, YieldSearchResult, YieldState},
 };

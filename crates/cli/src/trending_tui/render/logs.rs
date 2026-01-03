@@ -114,10 +114,7 @@ pub fn render_logs(f: &mut Frame, app: &mut TrendingAppState, area: Rect) {
             .position(app.logs.scroll)
             .viewport_content_length(estimated_visible_messages);
         f.render_stateful_widget(
-            Scrollbar::default()
-                .orientation(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(Some("↑"))
-                .end_symbol(Some("↓")),
+            Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight),
             area,
             &mut scrollbar_state,
         );

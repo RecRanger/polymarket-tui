@@ -13,8 +13,8 @@ use {
         logging::{log_error, log_info, log_warn},
         render::{self, ClickedTab, render, truncate},
         state::{
-            self, EventFilter, EventTrades, FocusedPanel, MainTab, PopupType, SearchMode,
-            TrendingAppState,
+            self, EventFilter, EventTrades, FocusedPanel, MainTab, OutcomeInfo, PopupType,
+            SearchMode, TrendingAppState,
         },
     },
     polymarket_api::clob::ClobClient,
@@ -369,18 +369,31 @@ pub async fn run_trending_tui(
 
             // Handle mouse events
             if let Event::Mouse(mouse) = &event {
-                // Skip mouse handling when a popup/modal is active
-                // The modal takes focus and background should not respond to mouse
+                // Handle popups first - they block all mouse events to background
                 {
                     let app = app_state.lock().await;
-                    if app.popup.is_some() {
-                        continue;
+                    if let Some(ref popup) = app.popup {
+                        // For Trade popup, we handle clicks inside the popup area
+                        // and ignore all clicks (don't pass to background handlers)
+                        if matches!(popup, PopupType::Trade) {
+                            // We'll handle Trade popup clicks below, but block non-click events
+                            if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+                                continue;
+                            }
+                        } else {
+                            // Other popups block all mouse events
+                            continue;
+                        }
                     }
                 }
 
-                // Focus panel on hover (mouse move)
+                // Focus panel on hover (mouse move) - only when no popup is active
                 if let MouseEventKind::Moved = mouse.kind {
                     let mut app = app_state.lock().await;
+                    // Skip if popup is active (already handled above, but be safe)
+                    if app.popup.is_some() {
+                        continue;
+                    }
                     let term_size = terminal.size()?;
                     let size = Rect::new(0, 0, term_size.width, term_size.height);
                     if let Some(panel) = get_panel_at_position(
@@ -418,6 +431,104 @@ pub async fn run_trending_tui(
                         } else {
                             app.show_popup(PopupType::Login);
                         }
+                        continue;
+                    }
+
+                    // Check for trade popup clicks (BUY/SELL in title, outcome tabs inside)
+                    if matches!(app.popup, Some(PopupType::Trade)) {
+                        // Calculate trade popup area (same as render_trade_popup)
+                        let popup_area =
+                            render::centered_rect_fixed_width(render::TRADE_POPUP_WIDTH, 60, size);
+
+                        // Check if click is on the title row (BUY/SELL toggle)
+                        if mouse.row == popup_area.y {
+                            // Title format: "╭BUY - SELL───..."
+                            // The rounded corner ╭ is at popup_area.x
+                            // Title text starts at popup_area.x + 1
+                            let title_start_x = popup_area.x + 1;
+                            let buy_end = title_start_x + 3; // "BUY" = 3 chars
+                            let sell_start = buy_end + 3; // " - " = 3 chars
+                            let sell_end = sell_start + 4; // "SELL" = 4 chars
+
+                            if mouse.column >= title_start_x && mouse.column < buy_end {
+                                // Clicked on BUY
+                                if let Some(ref mut form) = app.trade_form
+                                    && form.side != state::TradeSide::Buy
+                                {
+                                    form.side = state::TradeSide::Buy;
+                                }
+                            } else if mouse.column >= sell_start && mouse.column < sell_end {
+                                // Clicked on SELL
+                                if let Some(ref mut form) = app.trade_form
+                                    && form.side != state::TradeSide::Sell
+                                {
+                                    form.side = state::TradeSide::Sell;
+                                }
+                            }
+                        }
+
+                        // Check if click is on the outcome tabs row (line 4 inside popup)
+                        // Layout: border(1) + empty(1) + question(1) + empty(1) + tabs(1)
+                        // So tabs are at popup_area.y + 4
+                        let outcome_tabs_row = popup_area.y + 4;
+                        if mouse.row == outcome_tabs_row
+                            && let Some(ref mut form) = app.trade_form
+                        {
+                            // Calculate tab positions
+                            // Tabs start at x+2 (border + padding)
+                            // Each tab is " Name " with 2 spaces between tabs
+                            let mut tab_x = popup_area.x + 2;
+                            for (i, outcome) in form.outcomes.iter().enumerate() {
+                                let tab_width = outcome.name.len() as u16 + 2; // " Name "
+                                if mouse.column >= tab_x && mouse.column < tab_x + tab_width {
+                                    form.select_outcome(i);
+                                    break;
+                                }
+                                tab_x += tab_width + 2; // tab + 2 spaces between
+                            }
+                        }
+
+                        // Check if click is on LIMIT/MARKET order type row
+                        // Row position depends on auth state (balance adds 2 rows)
+                        let has_balance =
+                            app.auth_state.is_authenticated && app.auth_state.balance.is_some();
+                        // Layout from top of popup content area (popup_area.y + 1):
+                        // +0: empty, +1: question, +2: empty, +3: outcome tabs, +4: underline
+                        // +5: empty, +6: Best Ask, +7: empty
+                        // If balance: +8: Balance, +9: empty, +10: separator, +11: empty, +12: Order type
+                        // No balance: +8: separator, +9: empty, +10: Order type
+                        let order_type_row = if has_balance {
+                            popup_area.y + 1 + 12 // +1 for border, +12 for content lines
+                        } else {
+                            popup_area.y + 1 + 10 // +1 for border, +10 for content lines
+                        };
+
+                        if mouse.row == order_type_row {
+                            // "Order:      " = 12 chars, then " LIMIT " (7), "  " (2), " MARKET " (8)
+                            let label_offset = popup_area.x + 2 + 12; // border + padding + "Order:      "
+                            let limit_start = label_offset;
+                            let limit_end = limit_start + 7; // " LIMIT "
+                            let market_start = limit_end + 2; // "  " gap
+                            let market_end = market_start + 8; // " MARKET "
+
+                            if mouse.column >= limit_start
+                                && mouse.column < limit_end
+                                && let Some(ref mut form) = app.trade_form
+                                && form.order_type != state::OrderType::Limit
+                            {
+                                form.order_type = state::OrderType::Limit;
+                                form.active_field = state::TradeField::Shares;
+                            } else if mouse.column >= market_start
+                                && mouse.column < market_end
+                                && let Some(ref mut form) = app.trade_form
+                                && form.order_type != state::OrderType::Market
+                            {
+                                form.order_type = state::OrderType::Market;
+                                form.active_field = state::TradeField::Amount;
+                            }
+                        }
+
+                        // Trade popup is open - consume all mouse clicks (don't pass to background)
                         continue;
                     }
 
@@ -823,7 +934,7 @@ pub async fn run_trending_tui(
                             #[derive(Debug)]
                             enum MarketClickAction {
                                 SelectMarket(usize, Option<String>, bool), /* idx, token_id for orderbook, is_active */
-                                OpenTrade(String, String, String, f64), /* token_id, question, outcome, price */
+                                OpenTrade(String, Vec<OutcomeInfo>, usize), /* question, outcomes, selected_idx */
                             }
 
                             // Get the selected event based on current tab
@@ -833,138 +944,109 @@ pub async fn run_trending_tui(
                                 app.selected_event().cloned()
                             };
 
-                            let click_action: Option<MarketClickAction> =
-                                if let Some(ref event) = selected_event {
-                                    // Calculate which market row was clicked
-                                    let (_, _, _, markets_area, ..) = calculate_panel_areas(
-                                        size,
-                                        app.is_in_filter_mode(),
-                                        app.show_logs,
-                                        app.main_tab,
-                                    );
-                                    // Account for border (1 line at top)
-                                    let relative_y =
-                                        mouse.row.saturating_sub(markets_area.y + 1) as usize;
-                                    let clicked_idx = app.scroll.markets + relative_y;
-                                    let click_x = mouse.column.saturating_sub(markets_area.x + 1);
-                                    let panel_width = markets_area.width.saturating_sub(2); // borders
+                            let click_action: Option<MarketClickAction> = if let Some(ref event) =
+                                selected_event
+                            {
+                                // Calculate which market row was clicked
+                                let (_, _, _, markets_area, ..) = calculate_panel_areas(
+                                    size,
+                                    app.is_in_filter_mode(),
+                                    app.show_logs,
+                                    app.main_tab,
+                                );
+                                // Account for border (1 line at top)
+                                let relative_y =
+                                    mouse.row.saturating_sub(markets_area.y + 1) as usize;
+                                let clicked_idx = app.scroll.markets + relative_y;
+                                let click_x = mouse.column.saturating_sub(markets_area.x + 1);
+                                let panel_width = markets_area.width.saturating_sub(2); // borders
 
-                                    // Sort markets same way as render_markets (non-closed first)
-                                    let mut sorted_markets: Vec<_> = event.markets.iter().collect();
-                                    sorted_markets.sort_by_key(|m| m.closed);
+                                // Sort markets same way as render_markets (non-closed first)
+                                let mut sorted_markets: Vec<_> = event.markets.iter().collect();
+                                sorted_markets.sort_by_key(|m| m.closed);
 
-                                    if clicked_idx < sorted_markets.len() {
-                                        let market = sorted_markets[clicked_idx];
+                                if clicked_idx < sorted_markets.len() {
+                                    let market = sorted_markets[clicked_idx];
 
-                                        // For active markets, check if click is on Yes/No buttons
-                                        if !market.closed {
-                                            // Get prices for trade popup
-                                            let yes_price = if let Some(ref token_ids) =
-                                                market.clob_token_ids
-                                            {
-                                                token_ids.first().and_then(|asset_id| {
-                                                    app.market_prices.get(asset_id).copied()
-                                                })
-                                            } else {
-                                                None
-                                            }
-                                            .or_else(|| {
-                                                market
-                                                    .outcome_prices
-                                                    .first()
-                                                    .and_then(|p| p.parse::<f64>().ok())
-                                            });
-                                            let no_price = if let Some(ref token_ids) =
-                                                market.clob_token_ids
-                                            {
-                                                token_ids.get(1).and_then(|asset_id| {
-                                                    app.market_prices.get(asset_id).copied()
-                                                })
-                                            } else {
-                                                None
-                                            }
-                                            .or_else(|| {
-                                                market
-                                                    .outcome_prices
-                                                    .get(1)
-                                                    .and_then(|p| p.parse::<f64>().ok())
-                                            });
+                                    // For active markets, check if click is on Yes/No buttons
+                                    if !market.closed {
+                                        // Use fixed column widths (same as render.rs)
+                                        // Button column width = 17 chars each
+                                        const BUTTON_COL_WIDTH: u16 = 17;
 
-                                            // Use fixed column widths (same as render.rs)
-                                            // Button column width = 17 chars each
-                                            const BUTTON_COL_WIDTH: u16 = 17;
+                                        // Buttons are at the right edge of the panel with fixed widths
+                                        // Layout: ... [Yes button 17] [No button 17]
+                                        let no_button_start =
+                                            panel_width.saturating_sub(BUTTON_COL_WIDTH);
+                                        let yes_button_start = no_button_start
+                                            .saturating_sub(1)
+                                            .saturating_sub(BUTTON_COL_WIDTH);
 
-                                            // Buttons are at the right edge of the panel with fixed widths
-                                            // Layout: ... [Yes button 17] [No button 17]
-                                            let no_button_start =
-                                                panel_width.saturating_sub(BUTTON_COL_WIDTH);
-                                            let yes_button_start = no_button_start
-                                                .saturating_sub(1)
-                                                .saturating_sub(BUTTON_COL_WIDTH);
-
-                                            if click_x >= no_button_start {
-                                                // Clicked on No button
-                                                if let Some(ref token_ids) = market.clob_token_ids {
-                                                    if let Some(token_id) = token_ids.get(1) {
-                                                        let outcome = market
-                                                            .outcomes
-                                                            .get(1)
-                                                            .cloned()
-                                                            .unwrap_or_else(|| "No".to_string());
-                                                        Some(MarketClickAction::OpenTrade(
-                                                            token_id.clone(),
-                                                            market.question.clone(),
-                                                            outcome,
-                                                            no_price.unwrap_or(0.5),
-                                                        ))
-                                                    } else {
-                                                        None
-                                                    }
-                                                } else {
-                                                    None
+                                        // Build outcome info for all outcomes
+                                        let build_outcomes = || -> Vec<OutcomeInfo> {
+                                            let mut outcomes = Vec::new();
+                                            if let Some(ref token_ids) = market.clob_token_ids {
+                                                for (i, token_id) in token_ids.iter().enumerate() {
+                                                    let name = market
+                                                        .outcomes
+                                                        .get(i)
+                                                        .cloned()
+                                                        .unwrap_or_else(|| {
+                                                            if i == 0 {
+                                                                "Yes".to_string()
+                                                            } else {
+                                                                "No".to_string()
+                                                            }
+                                                        });
+                                                    let price = app
+                                                        .market_prices
+                                                        .get(token_id)
+                                                        .copied()
+                                                        .or_else(|| {
+                                                            market
+                                                                .outcome_prices
+                                                                .get(i)
+                                                                .and_then(|p| p.parse::<f64>().ok())
+                                                        })
+                                                        .unwrap_or(0.5);
+                                                    outcomes.push(OutcomeInfo {
+                                                        name,
+                                                        token_id: token_id.clone(),
+                                                        price,
+                                                    });
                                                 }
-                                            } else if click_x >= yes_button_start
-                                                && click_x < no_button_start
-                                            {
-                                                // Clicked on Yes button
-                                                if let Some(ref token_ids) = market.clob_token_ids {
-                                                    if let Some(token_id) = token_ids.first() {
-                                                        let outcome = market
-                                                            .outcomes
-                                                            .first()
-                                                            .cloned()
-                                                            .unwrap_or_else(|| "Yes".to_string());
-                                                        Some(MarketClickAction::OpenTrade(
-                                                            token_id.clone(),
-                                                            market.question.clone(),
-                                                            outcome,
-                                                            yes_price.unwrap_or(0.5),
-                                                        ))
-                                                    } else {
-                                                        None
-                                                    }
-                                                } else {
-                                                    None
-                                                }
-                                            } else {
-                                                // Clicked elsewhere on the row - select market
-                                                let outcome_idx =
-                                                    match app.orderbook_state.selected_outcome {
-                                                        state::OrderbookOutcome::Yes => 0,
-                                                        state::OrderbookOutcome::No => 1,
-                                                    };
-                                                let token_id = market
-                                                    .clob_token_ids
-                                                    .as_ref()
-                                                    .and_then(|ids| ids.get(outcome_idx).cloned());
-                                                Some(MarketClickAction::SelectMarket(
-                                                    clicked_idx,
-                                                    token_id,
-                                                    true, // active market
+                                            }
+                                            outcomes
+                                        };
+
+                                        if click_x >= no_button_start {
+                                            // Clicked on No button (index 1)
+                                            let outcomes = build_outcomes();
+                                            if outcomes.len() > 1 {
+                                                Some(MarketClickAction::OpenTrade(
+                                                    market.question.clone(),
+                                                    outcomes,
+                                                    1, // No is at index 1
                                                 ))
+                                            } else {
+                                                None
+                                            }
+                                        } else if click_x >= yes_button_start
+                                            && click_x < no_button_start
+                                        {
+                                            // Clicked on Yes button (index 0)
+                                            let outcomes = build_outcomes();
+                                            if !outcomes.is_empty() {
+                                                Some(MarketClickAction::OpenTrade(
+                                                    market.question.clone(),
+                                                    outcomes,
+                                                    0, // Yes is at index 0
+                                                ))
+                                            } else {
+                                                None
                                             }
                                         } else {
-                                            // Closed market - just select it
+                                            // Clicked elsewhere on the row - select market
                                             let outcome_idx =
                                                 match app.orderbook_state.selected_outcome {
                                                     state::OrderbookOutcome::Yes => 0,
@@ -977,15 +1059,32 @@ pub async fn run_trending_tui(
                                             Some(MarketClickAction::SelectMarket(
                                                 clicked_idx,
                                                 token_id,
-                                                false,
-                                            )) // closed market
+                                                true, // active market
+                                            ))
                                         }
                                     } else {
-                                        None
+                                        // Closed market - just select it
+                                        let outcome_idx = match app.orderbook_state.selected_outcome
+                                        {
+                                            state::OrderbookOutcome::Yes => 0,
+                                            state::OrderbookOutcome::No => 1,
+                                        };
+                                        let token_id = market
+                                            .clob_token_ids
+                                            .as_ref()
+                                            .and_then(|ids| ids.get(outcome_idx).cloned());
+                                        Some(MarketClickAction::SelectMarket(
+                                            clicked_idx,
+                                            token_id,
+                                            false,
+                                        )) // closed market
                                     }
                                 } else {
                                     None
-                                };
+                                }
+                            } else {
+                                None
+                            };
 
                             // Handle the click action
                             match click_action {
@@ -1008,18 +1107,12 @@ pub async fn run_trending_tui(
                                     }
                                 },
                                 Some(MarketClickAction::OpenTrade(
-                                    token_id,
                                     question,
-                                    outcome,
-                                    price,
+                                    outcomes,
+                                    selected_idx,
                                 )) => {
-                                    app.open_trade_popup(
-                                        token_id,
-                                        question.clone(),
-                                        outcome,
-                                        price,
-                                    );
                                     log_info!("Opening trade popup for: {}", question);
+                                    app.open_trade_popup(question, outcomes, selected_idx);
                                 },
                                 None => {},
                             }
@@ -1351,14 +1444,41 @@ pub async fn run_trending_tui(
                                 should_close = true;
                             },
                             KeyCode::Tab => {
-                                form.active_field = form.active_field.next();
+                                form.next_field();
                             },
                             KeyCode::BackTab => {
-                                form.active_field = form.active_field.prev();
+                                form.prev_field();
                             },
                             KeyCode::Char(' ') => {
-                                // Space toggles buy/sell side
-                                form.toggle_side();
+                                // Space toggles order type when on that field
+                                if form.active_field == state::TradeField::OrderType {
+                                    form.toggle_order_type();
+                                }
+                                // Note: Side is now toggled via title tabs, not space key
+                            },
+                            KeyCode::Char('+') | KeyCode::Char('=') => {
+                                // + increases limit price
+                                if form.active_field == state::TradeField::LimitPrice {
+                                    form.increment_limit_price();
+                                }
+                            },
+                            KeyCode::Char('-') | KeyCode::Char('_') => {
+                                // - decreases limit price
+                                if form.active_field == state::TradeField::LimitPrice {
+                                    form.decrement_limit_price();
+                                }
+                            },
+                            KeyCode::Up => {
+                                // Up arrow also increases limit price
+                                if form.active_field == state::TradeField::LimitPrice {
+                                    form.increment_limit_price();
+                                }
+                            },
+                            KeyCode::Down => {
+                                // Down arrow also decreases limit price
+                                if form.active_field == state::TradeField::LimitPrice {
+                                    form.decrement_limit_price();
+                                }
                             },
                             KeyCode::Backspace => {
                                 form.delete_char();
@@ -1368,22 +1488,53 @@ pub async fn run_trending_tui(
                                 if !is_authenticated {
                                     form.error_message =
                                         Some("Login required to trade".to_string());
-                                } else if form.amount.is_empty() || form.amount_f64() <= 0.0 {
-                                    form.error_message =
-                                        Some("Please enter a valid amount".to_string());
                                 } else {
-                                    // TODO: Actually submit the trade via CLOB API
-                                    log_info!(
-                                        "Trade submitted: {} ${} of {} at {:.0}¢",
-                                        form.side.label(),
-                                        form.amount,
-                                        form.outcome,
-                                        form.price * 100.0
-                                    );
-                                    form.error_message =
-                                        Some("Trade submission not yet implemented".to_string());
-                                    // For now, just close
-                                    // should_close = true;
+                                    // Validate based on order type
+                                    let is_valid = match form.order_type {
+                                        state::OrderType::Limit => {
+                                            !form.shares.is_empty() && form.shares_f64() > 0.0
+                                        },
+                                        state::OrderType::Market => {
+                                            !form.amount.is_empty() && form.amount_f64() > 0.0
+                                        },
+                                    };
+
+                                    if !is_valid {
+                                        form.error_message = Some(match form.order_type {
+                                            state::OrderType::Limit => {
+                                                "Please enter a valid number of shares".to_string()
+                                            },
+                                            state::OrderType::Market => {
+                                                "Please enter a valid amount".to_string()
+                                            },
+                                        });
+                                    } else {
+                                        // TODO: Actually submit the trade via CLOB API
+                                        match form.order_type {
+                                            state::OrderType::Limit => {
+                                                log_info!(
+                                                    "Limit order: {} {} shares of {} at {:.1}¢ (total: ${:.2})",
+                                                    form.side.label(),
+                                                    form.shares,
+                                                    form.outcome_name(),
+                                                    form.limit_price * 100.0,
+                                                    form.total_cost()
+                                                );
+                                            },
+                                            state::OrderType::Market => {
+                                                log_info!(
+                                                    "Market order: {} ${} of {} at {:.1}¢",
+                                                    form.side.label(),
+                                                    form.amount,
+                                                    form.outcome_name(),
+                                                    form.best_ask() * 100.0
+                                                );
+                                            },
+                                        }
+                                        form.error_message = Some(
+                                            "Trade submission not yet implemented".to_string(),
+                                        );
+                                    }
                                 }
                             },
                             KeyCode::Char(c) => {

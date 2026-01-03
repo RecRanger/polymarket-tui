@@ -124,7 +124,36 @@ pub fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, ar
     let truncated_name_0 = truncate(&outcome_0_name, 8);
     let truncated_name_1 = truncate(&outcome_1_name, 8);
 
-    let title_line = Line::from(vec![
+    // Check for arbitrage opportunity: if sum of best asks < 1.0, there's profit potential
+    // Get best ask prices for both outcomes from market_prices or orderbook
+    let arbitrage_detected = if let Some(m) = market {
+        if !m.closed {
+            if let Some(ref token_ids) = m.clob_token_ids {
+                let yes_ask = token_ids
+                    .first()
+                    .and_then(|id| app.market_prices.get(id).copied());
+                let no_ask = token_ids
+                    .get(1)
+                    .and_then(|id| app.market_prices.get(id).copied());
+
+                if let (Some(yes), Some(no)) = (yes_ask, no_ask) {
+                    // Arbitrage exists when sum of best asks < 1.0 (you can buy both for less than payout)
+                    // Use 0.999 threshold to account for fees (~0.1% taker fee on Polymarket)
+                    yes + no < 0.999
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    let mut title_spans = vec![
         if selected_outcome == OrderbookOutcome::Yes {
             Span::styled(
                 truncated_name_0.clone(),
@@ -152,7 +181,19 @@ pub fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, ar
                 Style::default().fg(Color::DarkGray),
             )
         },
-    ]);
+    ];
+
+    // Add arbitrage indicator if detected
+    if arbitrage_detected {
+        title_spans.push(Span::styled(
+            " $",
+            Style::default()
+                .fg(Color::LightGreen)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    let title_line = Line::from(title_spans);
 
     let is_focused = app.navigation.focused_panel == FocusedPanel::Markets; // TODO: Add FocusedPanel::Orderbook
     let block_style = if is_focused {
@@ -199,7 +240,9 @@ pub fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, ar
         let bids_count = orderbook.bids.len().min(MAX_PER_SIDE);
 
         // Depth visualization using bars scaled to max cumulative total
-        let bar_max_width = (chunks[0].width as usize).saturating_sub(2);
+        // Reserve space for " ASKS" / " BIDS" labels (5 chars) plus border (2 chars)
+        let label_width = 5; // " ASKS" or " BIDS"
+        let bar_max_width = (chunks[0].width as usize).saturating_sub(2 + label_width);
         let mut depth_lines: Vec<Line> = Vec::new();
 
         // Add empty line to align with the header row in the price panel
@@ -209,17 +252,28 @@ pub fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, ar
         // Reversed so highest price (deepest) is at top, best ask at bottom
         // Scale asks relative to max_ask_total for proper visualization
         let asks_to_show: Vec<_> = orderbook.asks.iter().take(asks_count).collect();
-        for level in asks_to_show.iter().rev() {
+        let asks_last_idx = asks_count.saturating_sub(1); // Last row for "ASKS" label (closest to spread)
+        for (i, level) in asks_to_show.iter().rev().enumerate() {
             let bar_width = if max_ask_total > 0.0 {
                 ((level.total / max_ask_total) * bar_max_width as f64).max(1.0) as usize
             } else {
                 1
             };
-            let bar = "█".repeat(bar_width.min(bar_max_width));
-            depth_lines.push(Line::from(vec![Span::styled(
-                bar,
-                Style::default().fg(Color::LightRed),
-            )]));
+            let bar_width = bar_width.min(bar_max_width);
+            let bar = "█".repeat(bar_width);
+
+            // Add "ASKS" label to the right of the bar on the last row (closest to spread/bids)
+            if i == asks_last_idx && bar_max_width > 0 {
+                depth_lines.push(Line::from(vec![
+                    Span::styled(bar, Style::default().fg(Color::LightRed)),
+                    Span::styled(" ASKS", Style::default().fg(Color::LightRed)),
+                ]));
+            } else {
+                depth_lines.push(Line::from(vec![Span::styled(
+                    bar,
+                    Style::default().fg(Color::LightRed),
+                )]));
+            }
         }
 
         // Add empty line for spread separator (spread is shown in the price panel)
@@ -228,17 +282,27 @@ pub fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, ar
         // Show bids (buy orders) in green at the bottom
         // Best bid at top, lowest bid at bottom
         // Scale bids relative to max_bid_total for proper visualization
-        for level in orderbook.bids.iter().take(bids_count) {
+        for (i, level) in orderbook.bids.iter().take(bids_count).enumerate() {
             let bar_width = if max_bid_total > 0.0 {
                 ((level.total / max_bid_total) * bar_max_width as f64).max(1.0) as usize
             } else {
                 1
             };
-            let bar = "█".repeat(bar_width.min(bar_max_width));
-            depth_lines.push(Line::from(vec![Span::styled(
-                bar,
-                Style::default().fg(Color::LightGreen),
-            )]));
+            let bar_width = bar_width.min(bar_max_width);
+            let bar = "█".repeat(bar_width);
+
+            // Add "BIDS" label to the right of the bar on the first row (best bid)
+            if i == 0 && bar_max_width > 0 {
+                depth_lines.push(Line::from(vec![
+                    Span::styled(bar, Style::default().fg(Color::LightGreen)),
+                    Span::styled(" BIDS", Style::default().fg(Color::LightGreen)),
+                ]));
+            } else {
+                depth_lines.push(Line::from(vec![Span::styled(
+                    bar,
+                    Style::default().fg(Color::LightGreen),
+                )]));
+            }
         }
 
         let depth_para = Paragraph::new(depth_lines).block(depth_block);

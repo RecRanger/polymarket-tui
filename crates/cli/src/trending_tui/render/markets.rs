@@ -51,10 +51,10 @@ pub fn render_markets(f: &mut Frame, app: &TrendingAppState, event: &Event, area
     // Fixed column widths for alignment - compact layout
     // Yield: "+XX.X%" = 6 chars max
     // Volume: "$XXX.XM" = 7 chars max
-    // Buttons combined: "[XXXXXXXX XX.X¢][XXXXXXXX XX.X¢]" = 32 chars max (adjacent, no space)
+    // Buttons: Yes=12 chars + No=13 chars = 25 chars total
     const YIELD_COL_WIDTH: usize = 6;
     const VOLUME_COL_WIDTH: usize = 7;
-    const BUTTONS_COL_WIDTH: usize = 32; // Both buttons combined
+    const BUTTONS_COL_WIDTH: usize = 25; // Both buttons combined (12 + 13)
 
     // Calculate total fixed right content width for active markets
     // Layout: [yield 6][space][volume 7][space][buttons 32] = 46
@@ -207,7 +207,12 @@ pub fn render_markets(f: &mut Frame, app: &TrendingAppState, event: &Event, area
             };
 
             // Build Buy buttons for active markets using actual outcome names
-            let (yes_button, no_button) = if !market.closed {
+            // Buttons are minimum size, with padding between them for alignment
+            // Max Yes button: "[ Yes 99.9¢]" = 13 chars
+            // Max No button: "[ No 99.9¢]" = 12 chars
+            const MAX_YES_BUTTON_WIDTH: usize = 13;
+            const MAX_NO_BUTTON_WIDTH: usize = 12;
+            let (yes_button, yes_padding, no_button, no_padding) = if !market.closed {
                 let yes_price_str = yes_price
                     .map(format_price_cents)
                     .unwrap_or_else(|| "N/A".to_string());
@@ -215,24 +220,29 @@ pub fn render_markets(f: &mut Frame, app: &TrendingAppState, event: &Event, area
                     .map(format_price_cents)
                     .unwrap_or_else(|| "N/A".to_string());
 
-                // Get outcome names, truncate to max 8 chars to keep buttons reasonable
+                // Get outcome names, truncate to max 3 chars to keep buttons compact
                 let outcome_0 = market
                     .outcomes
                     .first()
-                    .map(|s| truncate(s, 8))
+                    .map(|s| truncate(s, 3))
                     .unwrap_or_else(|| "Yes".to_string());
                 let outcome_1 = market
                     .outcomes
                     .get(1)
-                    .map(|s| truncate(s, 8))
+                    .map(|s| truncate(s, 3))
                     .unwrap_or_else(|| "No".to_string());
 
-                (
-                    format!("[{} {}]", outcome_0, yes_price_str),
-                    format!("[{} {}]", outcome_1, no_price_str),
-                )
+                // Create minimum-size buttons
+                let yes_btn = format!("[ {} {}]", outcome_0, yes_price_str);
+                let no_btn = format!("[ {} {}]", outcome_1, no_price_str);
+
+                // Calculate padding to align buttons
+                let yes_pad = MAX_YES_BUTTON_WIDTH.saturating_sub(yes_btn.len());
+                let no_pad = MAX_NO_BUTTON_WIDTH.saturating_sub(no_btn.len());
+
+                (yes_btn, yes_pad, no_btn, no_pad)
             } else {
-                (String::new(), String::new())
+                (String::new(), 0, String::new(), 0)
             };
 
             // Format yield return string if applicable
@@ -308,15 +318,16 @@ pub fn render_markets(f: &mut Frame, app: &TrendingAppState, event: &Event, area
                 ));
                 line_spans.push(Span::styled(" ", Style::default()));
 
-                // Both buttons combined and right-aligned as a single unit (no space between)
-                let buttons_combined = format!("{}{}", yes_button, no_button);
-                let buttons_width = buttons_combined.len();
-                // Add padding before buttons to right-align them
-                let buttons_padding = BUTTONS_COL_WIDTH.saturating_sub(buttons_width);
-                if buttons_padding > 0 {
-                    line_spans.push(Span::raw(" ".repeat(buttons_padding)));
+                // Buttons with padding before each to align their right edges
+                // Padding before Yes button to align Yes button's right edge
+                if yes_padding > 0 {
+                    line_spans.push(Span::raw(" ".repeat(yes_padding)));
                 }
                 line_spans.push(Span::styled(yes_button, Style::default().fg(Color::Green)));
+                // Padding before No button to align No button's right edge
+                if no_padding > 0 {
+                    line_spans.push(Span::raw(" ".repeat(no_padding)));
+                }
                 line_spans.push(Span::styled(no_button, Style::default().fg(Color::Red)));
             } else {
                 // For closed markets: show outcomes and volume
@@ -400,10 +411,7 @@ pub fn render_markets(f: &mut Frame, app: &TrendingAppState, event: &Event, area
             .position(clamped_scroll)
             .viewport_content_length(visible_height);
         f.render_stateful_widget(
-            Scrollbar::default()
-                .orientation(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(Some("↑"))
-                .end_symbol(Some("↓")),
+            Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight),
             area,
             &mut scrollbar_state,
         );

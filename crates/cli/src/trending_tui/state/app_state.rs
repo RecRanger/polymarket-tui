@@ -3,8 +3,8 @@
 use {
     super::{
         AuthState, EventFilter, EventSortBy, EventTrades, FavoritesState, LogsState, MainTab,
-        NavigationState, OrderbookState, PaginationState, PopupType, ScrollState, SearchMode,
-        SearchState, Trade, TradeFormState, TradesState, YieldState,
+        NavigationState, OrderbookState, OutcomeInfo, PaginationState, PopupType, ScrollState,
+        SearchMode, SearchState, Trade, TradeFormState, TradesState, YieldState,
     },
     polymarket_api::gamma::Event,
     ratatui::widgets::TableState,
@@ -175,19 +175,15 @@ impl TrendingAppState {
     }
 
     /// Open trade popup for a specific market
+    /// outcomes: Vec of (name, token_id, price) tuples
+    /// selected_idx: which outcome was clicked (to start with that selected)
     pub fn open_trade_popup(
         &mut self,
-        token_id: String,
         market_question: String,
-        outcome: String,
-        price: f64,
+        outcomes: Vec<OutcomeInfo>,
+        selected_idx: usize,
     ) {
-        self.trade_form = Some(TradeFormState::new(
-            token_id,
-            market_question,
-            outcome,
-            price,
-        ));
+        self.trade_form = Some(TradeFormState::new(market_question, outcomes, selected_idx));
         self.popup = Some(PopupType::Trade);
     }
 

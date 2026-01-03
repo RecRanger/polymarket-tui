@@ -3,7 +3,7 @@
 use {
     super::utils::{centered_rect, centered_rect_fixed_width, format_pnl, truncate},
     crate::trending_tui::state::{
-        LoginField, MainTab, PopupType, TradeField, TradeSide, TrendingAppState,
+        LoginField, MainTab, OrderType, PopupType, TradeField, TradeSide, TrendingAppState,
     },
     ratatui::{
         Frame,
@@ -636,7 +636,7 @@ fn render_user_profile_popup(f: &mut Frame, app: &TrendingAppState) {
 
     content.push(Line::from(""));
     content.push(Line::from(vec![Span::styled(
-        "─".repeat(55),
+        "─".repeat((TRADE_POPUP_WIDTH - 4) as usize),
         Style::default().fg(Color::DarkGray),
     )]));
 
@@ -733,7 +733,7 @@ fn render_user_profile_popup(f: &mut Frame, app: &TrendingAppState) {
     if auth.unrealized_pnl.is_some() || auth.realized_pnl.is_some() {
         content.push(Line::from(""));
         content.push(Line::from(vec![Span::styled(
-            "─".repeat(55),
+            "─".repeat((TRADE_POPUP_WIDTH - 4) as usize),
             Style::default().fg(Color::DarkGray),
         )]));
 
@@ -781,7 +781,7 @@ fn render_user_profile_popup(f: &mut Frame, app: &TrendingAppState) {
 
     content.push(Line::from(""));
     content.push(Line::from(vec![Span::styled(
-        "─".repeat(55),
+        "─".repeat((TRADE_POPUP_WIDTH - 4) as usize),
         Style::default().fg(Color::DarkGray),
     )]));
     content.push(Line::from(""));
@@ -817,8 +817,13 @@ fn render_user_profile_popup(f: &mut Frame, app: &TrendingAppState) {
 }
 
 /// Render trade popup with buy/sell form
+/// Fixed width for trade popup (content + borders)
+pub const TRADE_POPUP_WIDTH: u16 = 57;
+
 fn render_trade_popup(f: &mut Frame, app: &TrendingAppState) {
-    let area = centered_rect(65, 55, f.area());
+    use ratatui::layout::Position;
+
+    let area = centered_rect_fixed_width(TRADE_POPUP_WIDTH, 60, f.area());
     f.render_widget(Clear, area);
 
     let form = match &app.trade_form {
@@ -839,124 +844,223 @@ fn render_trade_popup(f: &mut Frame, app: &TrendingAppState) {
         },
     };
 
+    // Track which line the input fields are on for cursor positioning
+    #[allow(unused_assignments)]
+    let mut current_line: u16 = 0;
+    #[allow(unused_assignments)]
+    let mut input_field_line: Option<u16> = None;
+
     // Build content lines
-    let mut content = vec![
-        Line::from(""),
-        // Market question (truncated)
-        Line::from(vec![Span::styled(
-            truncate(&form.market_question, 55),
-            Style::default().fg(Color::White).bold(),
-        )]),
-        Line::from(""),
-        // Outcome
-        Line::from(vec![
-            Span::styled("Outcome: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(&form.outcome, Style::default().fg(Color::Cyan).bold()),
-        ]),
-        // Current price
-        Line::from(vec![
-            Span::styled("Price:   ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                format!("{:.0}¢", form.price * 100.0),
-                Style::default().fg(Color::Yellow),
-            ),
-        ]),
-        Line::from(""),
-    ];
+    let mut content = vec![];
+
+    // Empty line
+    content.push(Line::from(""));
+    current_line += 1;
+
+    // Market question (truncated to fit popup width)
+    content.push(Line::from(vec![Span::styled(
+        truncate(&form.market_question, (TRADE_POPUP_WIDTH - 4) as usize),
+        Style::default().fg(Color::White).bold(),
+    )]));
+    current_line += 1;
+
+    content.push(Line::from(""));
+    current_line += 1;
+
+    // Outcome tabs with square background (clickable, like orderbook Yes/No)
+    let mut outcome_spans = vec![];
+    for (i, outcome) in form.outcomes.iter().enumerate() {
+        if i > 0 {
+            outcome_spans.push(Span::raw("  ")); // Space between tabs
+        }
+        let is_selected = i == form.selected_outcome_idx;
+        let tab_style = if is_selected {
+            Style::default().fg(Color::Black).bg(Color::Cyan).bold()
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        outcome_spans.push(Span::styled(format!(" {} ", outcome.name), tab_style));
+    }
+    content.push(Line::from(outcome_spans));
+    current_line += 1;
+
+    // Underline below outcome tabs
+    content.push(Line::from(vec![Span::styled(
+        "─".repeat((TRADE_POPUP_WIDTH - 4) as usize),
+        Style::default().fg(Color::DarkGray),
+    )]));
+    current_line += 1;
+
+    content.push(Line::from(""));
+    current_line += 1;
+
+    // Best ask price for selected outcome
+    content.push(Line::from(vec![
+        Span::styled("Best Ask:   ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{:.1}¢", form.best_ask() * 100.0),
+            Style::default().fg(Color::Yellow),
+        ),
+    ]));
+    current_line += 1;
+
+    content.push(Line::from(""));
+    current_line += 1;
 
     // Show balance if authenticated
     if app.auth_state.is_authenticated
         && let Some(balance) = app.auth_state.balance
     {
         content.push(Line::from(vec![
-            Span::styled("Balance: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Balance:    ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 format!("${:.2}", balance),
                 Style::default().fg(Color::Green),
             ),
         ]));
+        current_line += 1;
+
+        content.push(Line::from(""));
+        current_line += 1;
     }
 
-    content.push(Line::from(""));
     content.push(Line::from(vec![Span::styled(
-        "─".repeat(50),
+        "─".repeat((TRADE_POPUP_WIDTH - 4) as usize),
         Style::default().fg(Color::DarkGray),
     )]));
-    content.push(Line::from(""));
-
-    // Side selection (BUY / SELL)
-    let side_active = form.active_field == TradeField::Side;
-    let buy_style = if form.side == TradeSide::Buy {
-        Style::default().fg(Color::Black).bg(Color::Green).bold()
-    } else if side_active {
-        Style::default().fg(Color::Green)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
-    let sell_style = if form.side == TradeSide::Sell {
-        Style::default().fg(Color::Black).bg(Color::Red).bold()
-    } else if side_active {
-        Style::default().fg(Color::Red)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
-
-    content.push(Line::from(vec![
-        Span::styled("Side:    ", Style::default().fg(Color::DarkGray)),
-        Span::styled(" BUY ", buy_style),
-        Span::raw("  "),
-        Span::styled(" SELL ", sell_style),
-        if side_active {
-            Span::styled("  ← Tab to toggle", Style::default().fg(Color::DarkGray))
-        } else {
-            Span::raw("")
-        },
-    ]));
+    current_line += 1;
 
     content.push(Line::from(""));
+    current_line += 1;
 
-    // Amount input field
-    let amount_active = form.active_field == TradeField::Amount;
-    let amount_style = if amount_active {
+    // Order type selection (LIMIT / MARKET)
+    let order_type_active = form.active_field == TradeField::OrderType;
+    let limit_style = if form.order_type == OrderType::Limit {
+        Style::default().fg(Color::Black).bg(Color::Cyan).bold()
+    } else if order_type_active {
         Style::default().fg(Color::Cyan)
     } else {
         Style::default().fg(Color::DarkGray)
     };
-    let amount_display = if form.amount.is_empty() {
-        "0.00".to_string()
+    let market_style = if form.order_type == OrderType::Market {
+        Style::default().fg(Color::Black).bg(Color::Magenta).bold()
+    } else if order_type_active {
+        Style::default().fg(Color::Magenta)
     } else {
-        form.amount.clone()
+        Style::default().fg(Color::DarkGray)
     };
 
     content.push(Line::from(vec![
-        Span::styled("Amount:  ", Style::default().fg(Color::DarkGray)),
-        Span::styled("$ ", amount_style),
-        Span::styled(
-            &amount_display,
-            if amount_active {
-                Style::default().fg(Color::White).bold()
-            } else {
-                Style::default().fg(Color::White)
-            },
-        ),
-        if amount_active {
-            Span::styled("_", Style::default().fg(Color::Cyan))
+        Span::styled("Order:      ", Style::default().fg(Color::DarkGray)),
+        Span::styled(" LIMIT ", limit_style),
+        Span::raw("  "),
+        Span::styled(" MARKET ", market_style),
+        if order_type_active {
+            Span::styled("  ← Space to toggle", Style::default().fg(Color::DarkGray))
         } else {
             Span::raw("")
         },
     ]));
+    current_line += 1;
+
+    content.push(Line::from(""));
+    current_line += 1;
+
+    // Order-type specific fields
+    match form.order_type {
+        OrderType::Limit => {
+            // Limit Price with +/- controls
+            let limit_price_active = form.active_field == TradeField::LimitPrice;
+            let price_style = if limit_price_active {
+                Style::default().fg(Color::White).bold()
+            } else {
+                Style::default().fg(Color::White)
+            };
+
+            content.push(Line::from(vec![
+                Span::styled("Limit:      ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    " - ",
+                    if limit_price_active {
+                        Style::default().fg(Color::Black).bg(Color::Yellow)
+                    } else {
+                        Style::default().fg(Color::DarkGray)
+                    },
+                ),
+                Span::styled(format!(" {:.1}¢ ", form.limit_price * 100.0), price_style),
+                Span::styled(
+                    " + ",
+                    if limit_price_active {
+                        Style::default().fg(Color::Black).bg(Color::Yellow)
+                    } else {
+                        Style::default().fg(Color::DarkGray)
+                    },
+                ),
+                if limit_price_active {
+                    Span::styled("  ← -/+ to adjust", Style::default().fg(Color::DarkGray))
+                } else {
+                    Span::raw("")
+                },
+            ]));
+            current_line += 1;
+
+            content.push(Line::from(""));
+            current_line += 1;
+
+            // Shares input field - placeholder, will be rendered separately
+            let shares_active = form.active_field == TradeField::Shares;
+            input_field_line = Some(current_line);
+
+            content.push(Line::from(vec![
+                Span::styled("Shares:     ", Style::default().fg(Color::DarkGray)),
+                // Placeholder for input field
+                Span::raw("                    "),
+            ]));
+
+            content.push(Line::from(""));
+
+            // Total (calculated)
+            let total = form.total_cost();
+            content.push(Line::from(vec![
+                Span::styled("Total:      ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!("${:.2}", total),
+                    Style::default().fg(Color::Yellow).bold(),
+                ),
+            ]));
+
+            // Store active state for later use
+            let _ = shares_active;
+        },
+        OrderType::Market => {
+            // Amount input field - placeholder, will be rendered separately
+            let amount_active = form.active_field == TradeField::Amount;
+            input_field_line = Some(current_line);
+
+            content.push(Line::from(vec![
+                Span::styled("Amount:     $ ", Style::default().fg(Color::DarkGray)),
+                // Placeholder for input field
+                Span::raw("                    "),
+            ]));
+
+            content.push(Line::from(""));
+
+            // Estimated shares
+            let shares = form.estimated_shares();
+            content.push(Line::from(vec![
+                Span::styled("Est. Shares: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{:.2}", shares), Style::default().fg(Color::White)),
+            ]));
+
+            // Store active state for later use
+            let _ = amount_active;
+        },
+    }
 
     content.push(Line::from(""));
 
-    // Estimated shares and profit
-    let shares = form.estimated_shares();
+    // Potential profit (shown for both order types)
     let profit = form.potential_profit();
-
-    content.push(Line::from(vec![
-        Span::styled("Est. Shares: ", Style::default().fg(Color::DarkGray)),
-        Span::styled(format!("{:.2}", shares), Style::default().fg(Color::White)),
-    ]));
-
     let profit_color = if profit >= 0.0 {
         Color::Green
     } else {
@@ -965,9 +1069,9 @@ fn render_trade_popup(f: &mut Frame, app: &TrendingAppState) {
     content.push(Line::from(vec![
         Span::styled(
             if form.side == TradeSide::Buy {
-                "Potential Profit: "
+                "Profit:     "
             } else {
-                "Proceeds: "
+                "Proceeds:   "
             },
             Style::default().fg(Color::DarkGray),
         ),
@@ -981,7 +1085,7 @@ fn render_trade_popup(f: &mut Frame, app: &TrendingAppState) {
                 },
                 profit.abs()
             ),
-            Style::default().fg(profit_color),
+            Style::default().fg(profit_color).bold(),
         ),
         if form.side == TradeSide::Buy {
             Span::styled(" (if outcome wins)", Style::default().fg(Color::DarkGray))
@@ -991,8 +1095,9 @@ fn render_trade_popup(f: &mut Frame, app: &TrendingAppState) {
     ]));
 
     content.push(Line::from(""));
+
     content.push(Line::from(vec![Span::styled(
-        "─".repeat(50),
+        "─".repeat((TRADE_POPUP_WIDTH - 4) as usize),
         Style::default().fg(Color::DarkGray),
     )]));
 
@@ -1019,16 +1124,39 @@ fn render_trade_popup(f: &mut Frame, app: &TrendingAppState) {
     // Instructions
     content.push(Line::from(vec![
         Span::styled("Tab", Style::default().fg(Color::Cyan).bold()),
-        Span::styled(" switch field  ", Style::default().fg(Color::DarkGray)),
+        Span::styled(" field  ", Style::default().fg(Color::DarkGray)),
         Span::styled("Space", Style::default().fg(Color::Cyan).bold()),
-        Span::styled(" toggle side  ", Style::default().fg(Color::DarkGray)),
+        Span::styled(" toggle  ", Style::default().fg(Color::DarkGray)),
+        Span::styled("-/+", Style::default().fg(Color::Yellow).bold()),
+        Span::styled(" price  ", Style::default().fg(Color::DarkGray)),
         Span::styled("Enter", Style::default().fg(Color::Green).bold()),
         Span::styled(" submit  ", Style::default().fg(Color::DarkGray)),
         Span::styled("Esc", Style::default().fg(Color::Red).bold()),
         Span::styled(" cancel", Style::default().fg(Color::DarkGray)),
     ]));
 
-    let title = format!(" {} {} ", form.side.label(), truncate(&form.outcome, 20));
+    // Build title with clickable BUY/SELL tabs (like orderbook's Yes/No tabs)
+    let buy_style = if form.side == TradeSide::Buy {
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let sell_style = if form.side == TradeSide::Sell {
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    let title_line = Line::from(vec![
+        Span::styled("BUY", buy_style),
+        Span::styled(" - ", Style::default().fg(Color::DarkGray)),
+        Span::styled("SELL", sell_style),
+    ]);
+
     let border_color = if form.side == TradeSide::Buy {
         Color::Green
     } else {
@@ -1036,7 +1164,7 @@ fn render_trade_popup(f: &mut Frame, app: &TrendingAppState) {
     };
 
     let block = Block::default()
-        .title(title)
+        .title(title_line)
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color))
@@ -1048,4 +1176,54 @@ fn render_trade_popup(f: &mut Frame, app: &TrendingAppState) {
         .wrap(Wrap { trim: true });
 
     f.render_widget(paragraph, area);
+
+    // Render input field with background color and cursor
+    if let Some(field_line) = input_field_line {
+        let (input_value, is_active, label_len) = match form.order_type {
+            OrderType::Limit => {
+                let display = if form.shares.is_empty() {
+                    "0".to_string()
+                } else {
+                    form.shares.clone()
+                };
+                (display, form.active_field == TradeField::Shares, 12) // "Shares:     " = 12
+            },
+            OrderType::Market => {
+                let display = if form.amount.is_empty() {
+                    "0.00".to_string()
+                } else {
+                    form.amount.clone()
+                };
+                (display, form.active_field == TradeField::Amount, 14) // "Amount:     $ " = 14
+            },
+        };
+
+        let field_width: u16 = 15;
+        let input_area = Rect {
+            x: area.x + 2 + label_len,  // border + padding + label length
+            y: area.y + 1 + field_line, // border + content offset
+            width: field_width,
+            height: 1,
+        };
+
+        // Style: different background for input field, highlighted when active
+        let (fg_color, bg_color) = if is_active {
+            (Color::White, Color::DarkGray)
+        } else {
+            (Color::Gray, Color::Rgb(30, 30, 30))
+        };
+
+        // Pad the display value to fill the field width
+        let padded_value = format!("{:<width$}", input_value, width = field_width as usize);
+
+        let input_para =
+            Paragraph::new(padded_value).style(Style::default().fg(fg_color).bg(bg_color));
+        f.render_widget(input_para, input_area);
+
+        // Set cursor position if this field is active
+        if is_active {
+            let cursor_x = input_area.x + input_value.len() as u16;
+            f.set_cursor_position(Position::new(cursor_x, input_area.y));
+        }
+    }
 }

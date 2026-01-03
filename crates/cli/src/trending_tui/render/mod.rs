@@ -18,5 +18,6 @@ pub use {
     clicks::{ClickedTab, get_clicked_tab, is_login_button_clicked},
     main_render::render,
     orderbook::check_orderbook_title_click,
-    utils::truncate,
+    popups::TRADE_POPUP_WIDTH,
+    utils::{centered_rect_fixed_width, truncate},
 };

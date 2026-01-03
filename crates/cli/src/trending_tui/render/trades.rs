@@ -194,10 +194,7 @@ pub fn render_trades_table(
             .position(scroll)
             .viewport_content_length(visible_height);
         f.render_stateful_widget(
-            Scrollbar::default()
-                .orientation(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(Some("↑"))
-                .end_symbol(Some("↓")),
+            Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight),
             area,
             &mut scrollbar_state,
         );
@@ -342,10 +339,7 @@ pub fn render_trades_panel(
                 .position(scroll)
                 .viewport_content_length(visible_height);
             f.render_stateful_widget(
-                Scrollbar::default()
-                    .orientation(ScrollbarOrientation::VerticalRight)
-                    .begin_symbol(Some("↑"))
-                    .end_symbol(Some("↓")),
+                Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight),
                 area,
                 &mut scrollbar_state,
             );
