@@ -16,11 +16,11 @@ lint:
 
 # Build the project
 build:
-    cargo build --features tui
+    cargo build --features tui,tracing
 
 # Build in release mode
 build-release:
-    cargo build --release --features tui
+    cargo build --release --features tui,tracing
 
 # Test WebSocket connection using websocat
 # Usage:
