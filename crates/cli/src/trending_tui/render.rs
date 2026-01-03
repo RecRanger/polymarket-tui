@@ -4425,13 +4425,30 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
         .min(event.markets.len().saturating_sub(1));
     let market = event.markets.get(selected_market_idx);
 
-    // Build title with Yes/No tabs
-    let yes_style = if selected_outcome == OrderbookOutcome::Yes {
+    // Get outcome names from market (default to Yes/No if not available)
+    let (outcome_0_name, outcome_1_name) = if let Some(m) = market {
+        let name_0 = m
+            .outcomes
+            .first()
+            .map(|s| truncate(s, 20))
+            .unwrap_or_else(|| "Yes".to_string());
+        let name_1 = m
+            .outcomes
+            .get(1)
+            .map(|s| truncate(s, 20))
+            .unwrap_or_else(|| "No".to_string());
+        (name_0, name_1)
+    } else {
+        ("Yes".to_string(), "No".to_string())
+    };
+
+    // Build title with outcome tabs (use actual outcome names from market)
+    let first_style = if selected_outcome == OrderbookOutcome::Yes {
         Style::default().fg(Color::Green).bold()
     } else {
         Style::default().fg(Color::DarkGray)
     };
-    let no_style = if selected_outcome == OrderbookOutcome::No {
+    let second_style = if selected_outcome == OrderbookOutcome::No {
         Style::default().fg(Color::Red).bold()
     } else {
         Style::default().fg(Color::DarkGray)
@@ -4440,9 +4457,9 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
     let title = Line::from(vec![
         Span::raw("Order Book "),
         Span::styled("[", Style::default().fg(Color::DarkGray)),
-        Span::styled("Yes", yes_style),
+        Span::styled(outcome_0_name, first_style),
         Span::styled("|", Style::default().fg(Color::DarkGray)),
-        Span::styled("No", no_style),
+        Span::styled(outcome_1_name, second_style),
         Span::styled("]", Style::default().fg(Color::DarkGray)),
         Span::raw(" (t: toggle)"),
     ]);
