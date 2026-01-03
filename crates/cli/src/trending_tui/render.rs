@@ -4371,15 +4371,14 @@ fn render_markets(f: &mut Frame, app: &TrendingAppState, event: &Event, area: Re
     // Fixed column widths for alignment - compact layout
     // Yield: "+XX.X%" = 6 chars max
     // Volume: "$XXX.XM" = 7 chars max
-    // Buttons: "[XXXXXXXX XX.X¢]" = outcome(8) + space + price(5) + brackets(2) = 16 chars max each
+    // Buttons combined: "[XXXXXXXX XX.X¢][XXXXXXXX XX.X¢]" = 32 chars max (adjacent, no space)
     const YIELD_COL_WIDTH: usize = 6;
     const VOLUME_COL_WIDTH: usize = 7;
-    const BUTTON_COL_WIDTH: usize = 16;
+    const BUTTONS_COL_WIDTH: usize = 32; // Both buttons combined
 
     // Calculate total fixed right content width for active markets
-    // Layout: [yield 6][space][volume 7][space][button1 16][button2 16] = 46 (buttons adjacent)
-    let fixed_right_width =
-        YIELD_COL_WIDTH + 1 + VOLUME_COL_WIDTH + 1 + BUTTON_COL_WIDTH + BUTTON_COL_WIDTH;
+    // Layout: [yield 6][space][volume 7][space][buttons 32] = 46
+    let fixed_right_width = YIELD_COL_WIDTH + 1 + VOLUME_COL_WIDTH + 1 + BUTTONS_COL_WIDTH;
     let usable_width = (area.width as usize).saturating_sub(2); // -2 for borders
     let icon_width = 2; // "● " or "$ " etc.
 
@@ -4629,13 +4628,16 @@ fn render_markets(f: &mut Frame, app: &TrendingAppState, event: &Event, area: Re
                 ));
                 line_spans.push(Span::styled(" ", Style::default()));
 
-                // Both buttons together, right-aligned (Yes right-aligned, No right-aligned adjacent)
-                let yes_padded = format!("{:>width$}", yes_button, width = BUTTON_COL_WIDTH);
-                line_spans.push(Span::styled(yes_padded, Style::default().fg(Color::Green)));
-
-                // No button right-aligned within its column width (adjacent to Yes, no space)
-                let no_padded = format!("{:>width$}", no_button, width = BUTTON_COL_WIDTH);
-                line_spans.push(Span::styled(no_padded, Style::default().fg(Color::Red)));
+                // Both buttons combined and right-aligned as a single unit (no space between)
+                let buttons_combined = format!("{}{}", yes_button, no_button);
+                let buttons_width = buttons_combined.len();
+                // Add padding before buttons to right-align them
+                let buttons_padding = BUTTONS_COL_WIDTH.saturating_sub(buttons_width);
+                if buttons_padding > 0 {
+                    line_spans.push(Span::raw(" ".repeat(buttons_padding)));
+                }
+                line_spans.push(Span::styled(yes_button, Style::default().fg(Color::Green)));
+                line_spans.push(Span::styled(no_button, Style::default().fg(Color::Red)));
             } else {
                 // For closed markets: show outcomes and volume
                 if !outcomes_str.is_empty() {
