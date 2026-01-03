@@ -11,8 +11,8 @@ use {
         style::{Color, Modifier, Style},
         text::{Line, Span},
         widgets::{
-            Block, BorderType, Borders, Cell, Clear, LineGauge, List, ListItem, ListState,
-            Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, Tabs, Wrap,
+            Block, BorderType, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row,
+            Scrollbar, ScrollbarOrientation, ScrollbarState, Table, Tabs, Wrap,
         },
     },
     unicode_width::UnicodeWidthStr,
@@ -157,15 +157,6 @@ pub fn render(f: &mut Frame, app: &mut TrendingAppState) {
     // Render popup if active (on top of everything)
     if let Some(ref popup) = app.popup {
         render_popup(f, popup);
-    }
-
-    // Render loading gauge if actively loading
-    if app.pagination.is_fetching_more
-        || app.search.is_searching
-        || app.yield_state.is_loading
-        || app.yield_state.is_search_loading
-    {
-        render_loading_gauge(f, app);
     }
 }
 
@@ -327,17 +318,12 @@ fn render_yield_tab(f: &mut Frame, app: &TrendingAppState, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             ))
         };
-        let search_title = if yield_state.is_search_loading {
-            "Search (loading...)"
-        } else {
-            "Search (Esc to close)"
-        };
         let search_input = Paragraph::new(vec![search_text])
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .title(search_title)
+                    .title("Search (Esc to close)")
                     .border_style(Style::default().fg(Color::Yellow)),
             )
             .alignment(Alignment::Left);
@@ -525,8 +511,16 @@ fn render_yield_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             let return_str = format!("{:.2}%", opp.est_return);
             let price_str = format!("{:.1}¢", opp.price * 100.0);
 
-            // Truncate market name to fit the column
-            let market_name = truncate(&opp.market_name, 35);
+            // Create a cell with event title (dimmed) and market name
+            // Let the table handle truncation based on column width
+            let name_cell = Cell::from(Line::from(vec![
+                Span::styled(
+                    opp.event_title.as_str(),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(" > ", Style::default().fg(Color::DarkGray)),
+                Span::styled(opp.market_name.as_str(), Style::default().fg(Color::White)),
+            ]));
 
             // Zebra striping
             let bg_color = if idx % 2 == 0 {
@@ -536,7 +530,7 @@ fn render_yield_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             };
 
             Row::new(vec![
-                Cell::from(market_name).style(Style::default().fg(Color::White)),
+                name_cell,
                 Cell::from(return_str).style(Style::default().fg(return_color)),
                 Cell::from(price_str).style(Style::default().fg(Color::Cyan)),
                 Cell::from(volume_str).style(Style::default().fg(Color::Green)),
@@ -570,6 +564,17 @@ fn render_yield_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         )
     };
 
+    // Build block with optional bottom title for loading/searching status
+    let mut block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .title(title)
+        .border_style(block_style);
+
+    if yield_state.is_search_loading {
+        block = block.title_bottom(Line::from(" Searching... ").centered());
+    }
+
     let table = Table::new(rows, [
         Constraint::Fill(1),   // Market name (takes remaining space)
         Constraint::Length(7), // Return (e.g., "12.34%")
@@ -586,14 +591,7 @@ fn render_yield_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             )
             .bottom_margin(0),
     )
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_type(BorderType::Rounded)
-            .title(title)
-            .border_style(block_style),
-    )
+    .block(block)
     .column_spacing(1)
     .row_highlight_style(
         Style::default()
@@ -893,9 +891,6 @@ fn render_yield_search_results(f: &mut Frame, app: &TrendingAppState, area: Rect
                 })
                 .unwrap_or_else(|| "N/A".to_string());
 
-            // Truncate event title
-            let title = truncate(&result.event_title, 40);
-
             // Zebra striping
             let bg_color = if idx % 2 == 0 {
                 Color::Reset
@@ -904,7 +899,7 @@ fn render_yield_search_results(f: &mut Frame, app: &TrendingAppState, area: Rect
             };
 
             Row::new(vec![
-                Cell::from(title).style(Style::default().fg(Color::White)),
+                Cell::from(result.event_title.as_str()).style(Style::default().fg(Color::White)),
                 Cell::from(yield_str).style(Style::default().fg(yield_color)),
                 Cell::from(volume_str).style(Style::default().fg(Color::Green)),
                 Cell::from(format!("{}", result.markets_count))
@@ -928,6 +923,17 @@ fn render_yield_search_results(f: &mut Frame, app: &TrendingAppState, area: Rect
         truncate(&yield_state.last_searched_query, 20)
     );
 
+    // Build block with optional bottom title for searching status
+    let mut block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .title(title)
+        .border_style(block_style);
+
+    if yield_state.is_search_loading {
+        block = block.title_bottom(Line::from(" Searching... ").centered());
+    }
+
     let table = Table::new(rows, [
         Constraint::Fill(1),   // Event title
         Constraint::Length(9), // Yield (e.g., "No yield")
@@ -944,13 +950,7 @@ fn render_yield_search_results(f: &mut Frame, app: &TrendingAppState, area: Rect
             )
             .bottom_margin(0),
     )
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .title(title)
-            .border_style(block_style),
-    )
+    .block(block)
     .column_spacing(1)
     .row_highlight_style(
         Style::default()
@@ -1281,38 +1281,6 @@ fn render_popup(f: &mut Frame, popup: &PopupType) {
     f.render_widget(paragraph, area);
 }
 
-/// Render a loading gauge at the bottom of the screen
-fn render_loading_gauge(f: &mut Frame, app: &TrendingAppState) {
-    // Position at the very bottom, above the footer
-    let area = Rect {
-        x: 1,
-        y: f.area().height.saturating_sub(4),
-        width: f.area().width.saturating_sub(2),
-        height: 1,
-    };
-
-    let label = if app.yield_state.is_search_loading {
-        "Searching yield..."
-    } else if app.search.is_searching {
-        "Searching..."
-    } else if app.yield_state.is_loading {
-        "Loading yield opportunities..."
-    } else {
-        "Loading more events..."
-    };
-
-    // Use an indeterminate progress (pulse effect via loading_progress)
-    let gauge = LineGauge::default()
-        .filled_style(Style::default().fg(Color::Cyan))
-        .unfilled_style(Style::default().fg(Color::DarkGray))
-        .filled_symbol("━")
-        .unfilled_symbol("━")
-        .ratio(app.loading_progress)
-        .label(label);
-
-    f.render_widget(gauge, area);
-}
-
 fn render_events_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
     let filtered_events = app.filtered_events();
     let visible_events: Vec<_> = filtered_events
@@ -1453,26 +1421,26 @@ fn render_events_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
 
     // Build title with count
     let event_count = app.filtered_events().len();
-    let title = if app.pagination.is_fetching_more {
-        format!("Events ({}) loading...", event_count)
-    } else {
-        format!("Events ({})", event_count)
-    };
+    let title = format!("Events ({})", event_count);
 
-    let list = List::new(items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_type(BorderType::Rounded)
-                .title(title)
-                .border_style(block_style),
-        )
-        .highlight_style(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD | Modifier::REVERSED),
-        );
+    // Build block with optional bottom title for loading status
+    let mut block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .title(title)
+        .border_style(block_style);
+
+    if app.pagination.is_fetching_more {
+        block = block.title_bottom(Line::from(" Loading more... ").centered());
+    } else if app.search.is_searching {
+        block = block.title_bottom(Line::from(" Searching... ").centered());
+    }
+
+    let list = List::new(items).block(block).highlight_style(
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD | Modifier::REVERSED),
+    );
 
     let mut state = ListState::default();
     state.select(Some(
@@ -1518,7 +1486,6 @@ fn render_trades(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         // Use Spacing::Overlap(1) to collapse borders between panels
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-
             .constraints([
                 Constraint::Length(min_event_details_height as u16), // Event details (minimum height, scrollable)
                 Constraint::Length(7), // Markets panel (5 lines + 2 for borders)
@@ -1892,7 +1859,8 @@ fn render_event_details(
         let available_width = (area.width as usize).saturating_sub(8); // "Tags: " (6) + borders (2)
 
         // If tags text fits on one line, add it normally
-        if tags_text.len() <= available_width {
+        let tags_char_count = tags_text.chars().count();
+        if tags_char_count <= available_width {
             lines.push(Line::from(vec![
                 Span::styled("Tags: ", Style::default().fg(Color::Yellow).bold()),
                 Span::styled(tags_text, Style::default().fg(Color::Cyan)),
@@ -1903,23 +1871,15 @@ fn render_event_details(
             let tags_content = &tags_text;
             let content_width = available_width.saturating_sub(tags_prefix.len());
 
-            // First line with prefix
-            let first_line_content = if tags_content.len() > content_width {
-                truncate(tags_content, content_width)
-            } else {
-                tags_content.clone()
-            };
+            // First line with prefix (use character-based truncation)
+            let first_line_content: String = tags_content.chars().take(content_width).collect();
             lines.push(Line::from(vec![
                 Span::styled(tags_prefix, Style::default().fg(Color::Yellow).bold()),
                 Span::styled(first_line_content, Style::default().fg(Color::Cyan)),
             ]));
 
             // Additional wrapped lines (without prefix, indented)
-            let remaining_content = if tags_content.len() > content_width {
-                &tags_content[content_width..]
-            } else {
-                ""
-            };
+            let remaining_content: String = tags_content.chars().skip(content_width).collect();
 
             // Split remaining content into chunks that fit
             let indent = "      "; // 6 spaces to align with content after "Tags: "
@@ -2246,11 +2206,13 @@ fn render_markets(f: &mut Frame, app: &TrendingAppState, event: &Event, area: Re
     }
 }
 
-pub fn truncate(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
+pub fn truncate(s: &str, max_chars: usize) -> String {
+    let char_count = s.chars().count();
+    if char_count <= max_chars {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_len.saturating_sub(3)])
+        let truncated: String = s.chars().take(max_chars.saturating_sub(3)).collect();
+        format!("{}...", truncated)
     }
 }
 

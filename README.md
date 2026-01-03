@@ -9,6 +9,8 @@ output.
 This was started as a pet project for me to play with AI. This used Cursor,
 Claude and Codex.
 
+![Screenshot](screenshot.png)
+
 ## Features
 
 - 🔴 **Real-time WebSocket monitoring** - Connect to Polymarket's WebSocket API for live updates

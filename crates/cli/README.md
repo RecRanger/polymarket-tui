@@ -45,6 +45,8 @@ polymarket-tui --help
 
 ## Screenshot
 
+![Screenshot](https://raw.githubusercontent.com/penso/polymarket-tui/main/screenshot.png)
+
 The TUI displays:
 - **Left panel**: Event list with volume and market count
 - **Right panel**: Event details, markets with prices, and live trades

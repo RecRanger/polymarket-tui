@@ -553,7 +553,6 @@ pub struct TrendingAppState {
     pub has_clob_auth: bool,       // Whether CLOB API authentication is available
     pub popup: Option<PopupType>,  // Currently active popup/modal
     pub trades_table_state: TableState, // State for trades table selection
-    pub loading_progress: f64,     // Loading progress (0.0 to 1.0) for LineGauge
     pub events_cache: HashMap<EventFilter, Vec<Event>>, // Cache for each filter tab
     pub show_logs: bool,           // Whether to show the logs panel (toggle with 'l')
     pub main_tab: MainTab,         // Current main tab (Trending vs Yield)
@@ -589,7 +588,6 @@ impl TrendingAppState {
             has_clob_auth,
             popup: None,
             trades_table_state: TableState::default(),
-            loading_progress: 0.0,
             events_cache,
             show_logs: false, // Hidden by default
             main_tab: MainTab::Trending,
