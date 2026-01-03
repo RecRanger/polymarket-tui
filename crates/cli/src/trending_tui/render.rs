@@ -28,6 +28,24 @@ pub enum ClickedTab {
     Yield,
 }
 
+/// Calculate the required height for the orderbook panel based on data
+/// Returns a height that fits up to 6 asks + 6 bids + header + spread + borders
+fn calculate_orderbook_height(app: &TrendingAppState) -> u16 {
+    const MIN_HEIGHT: u16 = 6; // Minimum: borders(2) + header(1) + spread(1) + 1 ask + 1 bid
+    const MAX_PER_SIDE: usize = 6; // Show up to 6 rows per side like the website
+
+    if let Some(orderbook) = &app.orderbook_state.orderbook {
+        let asks_count = orderbook.asks.len().min(MAX_PER_SIDE);
+        let bids_count = orderbook.bids.len().min(MAX_PER_SIDE);
+        // Height = borders(2) + header(1) + asks + spread(1) + bids
+        let height = 2 + 1 + asks_count + 1 + bids_count;
+        (height as u16).max(MIN_HEIGHT)
+    } else {
+        // Default height when no data or loading
+        MIN_HEIGHT
+    }
+}
+
 /// Render a search/filter input field with proper styling
 /// Returns the cursor position if the field should show a cursor
 fn render_search_input(
@@ -825,14 +843,17 @@ fn render_favorites_tab(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         let trades = app.get_trades(event_slug);
         let is_watching = app.is_watching(event_slug);
 
+        // Calculate dynamic orderbook height based on data
+        let orderbook_height = calculate_orderbook_height(app);
+
         // Split right side into event details, markets, orderbook, and trades
         let right_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(8),  // Event details
-                Constraint::Length(7),  // Markets panel
-                Constraint::Length(12), // Order Book panel
-                Constraint::Min(0),     // Trades table
+                Constraint::Length(8),                // Event details
+                Constraint::Length(7),                // Markets panel
+                Constraint::Length(orderbook_height), // Order Book panel (dynamic)
+                Constraint::Min(0),                   // Trades table
             ])
             .split(main_chunks[1]);
 
@@ -3660,14 +3681,17 @@ fn render_trades(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         // Content will scroll if it exceeds this height
         let min_event_details_height = 8; // Minimum height (6 base lines + 2 for borders)
 
+        // Calculate dynamic orderbook height based on data
+        let orderbook_height = calculate_orderbook_height(app);
+
         // Split area into event details, markets, orderbook, and trades
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(min_event_details_height as u16), // Event details (minimum height, scrollable)
-                Constraint::Length(7), // Markets panel (5 lines + 2 for borders)
-                Constraint::Length(12), // Order Book panel
-                Constraint::Min(0),    // Trades table
+                Constraint::Length(7),                // Markets panel (5 lines + 2 for borders)
+                Constraint::Length(orderbook_height), // Order Book panel (dynamic)
+                Constraint::Min(0),                   // Trades table
             ])
             .split(area);
 
@@ -4730,18 +4754,11 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
             .title(short_title)
             .border_style(block_style);
 
-        // Calculate row counts ONCE for both depth chart and price levels
-        // visible_rows = panel height - 2 (for borders)
-        // We need: 1 header + asks_count + 1 spread + bids_count = visible_rows
-        // So asks_count + bids_count = visible_rows - 2
-        // Split evenly, with preference for showing up to 6 per side like the website
-        let visible_rows = (chunks[1].height as usize).saturating_sub(2);
-        let available_for_orders = visible_rows.saturating_sub(2); // subtract header and spread
-        let half = available_for_orders / 2;
-        // Show up to 6 rows per side (like website), but limited by available space and data
-        let target_per_side = half.min(6);
-        let asks_count = target_per_side.min(orderbook.asks.len());
-        let bids_count = target_per_side.min(orderbook.bids.len());
+        // Calculate row counts based on available data (up to 6 per side like website)
+        // Panel height is now dynamic, so we show all available data up to the limit
+        const MAX_PER_SIDE: usize = 6;
+        let asks_count = orderbook.asks.len().min(MAX_PER_SIDE);
+        let bids_count = orderbook.bids.len().min(MAX_PER_SIDE);
 
         // Depth visualization using bars scaled to max cumulative total
         let bar_max_width = (chunks[0].width as usize).saturating_sub(2);
@@ -4795,7 +4812,6 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
             .border_type(BorderType::Rounded)
             .border_style(block_style);
 
-        // visible_rows already calculated above for synchronization with depth chart
         let panel_width = (chunks[1].width as usize).saturating_sub(2); // Account for border
 
         // Fixed column widths for alignment
