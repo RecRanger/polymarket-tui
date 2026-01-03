@@ -1015,7 +1015,7 @@ impl OrderbookOutcome {
 pub struct OrderbookLevel {
     pub price: f64,
     pub size: f64,
-    pub total: f64, // price * size
+    pub total: f64, // cumulative total (running sum of price * size from best price)
 }
 
 /// Orderbook data for a market

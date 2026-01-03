@@ -4707,13 +4707,11 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
     if has_orders {
         let orderbook = orderbook_state.orderbook.as_ref().unwrap();
 
-        // Find max size for scaling the depth bars
-        let max_size = orderbook
-            .bids
-            .iter()
-            .chain(orderbook.asks.iter())
-            .map(|l| l.size)
-            .fold(0.0_f64, |a, b| a.max(b));
+        // Find max cumulative total for scaling the depth bars
+        // Use the last (deepest) level's cumulative total for each side
+        let max_bid_total = orderbook.bids.last().map(|l| l.total).unwrap_or(0.0);
+        let max_ask_total = orderbook.asks.last().map(|l| l.total).unwrap_or(0.0);
+        let max_total = max_bid_total.max(max_ask_total);
 
         // Split area into two columns: depth chart (left) and price levels (right)
         let chunks = Layout::default()
@@ -4731,16 +4729,17 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
             .title(short_title)
             .border_style(block_style);
 
-        // Depth visualization using bars scaled to max size
+        // Depth visualization using bars scaled to max cumulative total
         let visible_height = (chunks[0].height as usize).saturating_sub(2);
         let bar_max_width = (chunks[0].width as usize).saturating_sub(2);
         let mut depth_lines: Vec<Line> = Vec::new();
 
-        // Show asks (sell orders) in red at the top
+        // Show asks (sell orders) in red at the top - bars grow from right to left
+        // Reversed so highest price (deepest) is at top, best ask at bottom
         let asks_to_show: Vec<_> = orderbook.asks.iter().take(visible_height / 2).collect();
         for level in asks_to_show.iter().rev() {
-            let bar_width = if max_size > 0.0 {
-                ((level.size / max_size) * bar_max_width as f64).max(1.0) as usize
+            let bar_width = if max_total > 0.0 {
+                ((level.total / max_total) * bar_max_width as f64).max(1.0) as usize
             } else {
                 1
             };
@@ -4751,25 +4750,15 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
             )]));
         }
 
-        // Add spread line
-        if let Some(spread) = orderbook.spread {
-            let spread_cents = spread * 100.0;
-            let spread_str = if spread_cents >= 1.0 {
-                format!("Spread: {:.1}¢", spread_cents)
-            } else {
-                format!("Spread: {:.2}¢", spread_cents)
-            };
-            depth_lines.push(Line::from(vec![Span::styled(
-                spread_str,
-                Style::default().fg(Color::Yellow),
-            )]));
-        }
+        // Add empty line for spread separator (spread is shown in the price panel)
+        depth_lines.push(Line::from(vec![Span::raw("")]));
 
         // Show bids (buy orders) in green at the bottom
+        // Best bid at top, lowest bid at bottom
         let bids_to_show = orderbook.bids.iter().take(visible_height / 2);
         for level in bids_to_show {
-            let bar_width = if max_size > 0.0 {
-                ((level.size / max_size) * bar_max_width as f64).max(1.0) as usize
+            let bar_width = if max_total > 0.0 {
+                ((level.total / max_total) * bar_max_width as f64).max(1.0) as usize
             } else {
                 1
             };

@@ -643,30 +643,35 @@ fn spawn_fetch_orderbook(app_state: Arc<TokioMutex<TrendingAppState>>, token_id:
                 );
 
                 // Convert CLOB API Orderbook to our OrderbookData
+                // Calculate cumulative totals (running sum of price * size from best price)
+                let mut cumulative_total = 0.0;
                 let bids: Vec<state::OrderbookLevel> = orderbook
                     .bids
                     .iter()
                     .map(|level| {
                         let price = level.price.parse::<f64>().unwrap_or(0.0);
                         let size = level.size.parse::<f64>().unwrap_or(0.0);
+                        cumulative_total += price * size;
                         state::OrderbookLevel {
                             price,
                             size,
-                            total: price * size,
+                            total: cumulative_total,
                         }
                     })
                     .collect();
 
+                let mut cumulative_total = 0.0;
                 let asks: Vec<state::OrderbookLevel> = orderbook
                     .asks
                     .iter()
                     .map(|level| {
                         let price = level.price.parse::<f64>().unwrap_or(0.0);
                         let size = level.size.parse::<f64>().unwrap_or(0.0);
+                        cumulative_total += price * size;
                         state::OrderbookLevel {
                             price,
                             size,
-                            total: price * size,
+                            total: cumulative_total,
                         }
                     })
                     .collect();
