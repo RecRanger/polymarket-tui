@@ -4462,39 +4462,66 @@ fn render_markets(f: &mut Frame, app: &TrendingAppState, event: &Event, area: Re
             };
 
             // Get prices for active markets (for Buy buttons)
+            // Priority: 1) orderbook best ask (for selected market), 2) market_prices from batch API, 3) outcome_prices
             let (yes_price, no_price): (Option<f64>, Option<f64>) = if !market.closed {
-                let yes = if let Some(ref token_ids) = market.clob_token_ids {
-                    token_ids
-                        .first()
-                        .and_then(|asset_id| app.market_prices.get(asset_id).copied())
-                        .or_else(|| {
-                            market
-                                .outcome_prices
-                                .first()
-                                .and_then(|p| p.parse::<f64>().ok())
-                        })
+                // Check if this is the selected market with orderbook data
+                let orderbook_price = if is_orderbook_selected {
+                    app.orderbook_state
+                        .orderbook
+                        .as_ref()
+                        .and_then(|ob| ob.asks.first().map(|level| level.price))
                 } else {
-                    market
-                        .outcome_prices
-                        .first()
-                        .and_then(|p| p.parse::<f64>().ok())
+                    None
                 };
-                let no = if let Some(ref token_ids) = market.clob_token_ids {
-                    token_ids
-                        .get(1)
-                        .and_then(|asset_id| app.market_prices.get(asset_id).copied())
-                        .or_else(|| {
-                            market
-                                .outcome_prices
-                                .get(1)
-                                .and_then(|p| p.parse::<f64>().ok())
-                        })
+
+                // For the selected market, use orderbook price based on which outcome is displayed
+                let (yes_from_orderbook, no_from_orderbook) = if is_orderbook_selected {
+                    match app.orderbook_state.selected_outcome {
+                        crate::trending_tui::state::OrderbookOutcome::Yes => {
+                            (orderbook_price, None)
+                        },
+                        crate::trending_tui::state::OrderbookOutcome::No => (None, orderbook_price),
+                    }
                 } else {
-                    market
-                        .outcome_prices
-                        .get(1)
-                        .and_then(|p| p.parse::<f64>().ok())
+                    (None, None)
                 };
+
+                let yes = yes_from_orderbook.or_else(|| {
+                    if let Some(ref token_ids) = market.clob_token_ids {
+                        token_ids
+                            .first()
+                            .and_then(|asset_id| app.market_prices.get(asset_id).copied())
+                            .or_else(|| {
+                                market
+                                    .outcome_prices
+                                    .first()
+                                    .and_then(|p| p.parse::<f64>().ok())
+                            })
+                    } else {
+                        market
+                            .outcome_prices
+                            .first()
+                            .and_then(|p| p.parse::<f64>().ok())
+                    }
+                });
+                let no = no_from_orderbook.or_else(|| {
+                    if let Some(ref token_ids) = market.clob_token_ids {
+                        token_ids
+                            .get(1)
+                            .and_then(|asset_id| app.market_prices.get(asset_id).copied())
+                            .or_else(|| {
+                                market
+                                    .outcome_prices
+                                    .get(1)
+                                    .and_then(|p| p.parse::<f64>().ok())
+                            })
+                    } else {
+                        market
+                            .outcome_prices
+                            .get(1)
+                            .and_then(|p| p.parse::<f64>().ok())
+                    }
+                });
                 (yes, no)
             } else {
                 (None, None)
