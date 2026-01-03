@@ -4550,56 +4550,94 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
             .border_style(block_style);
 
         let visible_rows = (chunks[1].height as usize).saturating_sub(2);
+        let panel_width = (chunks[1].width as usize).saturating_sub(2); // Account for border
+
+        // Fixed column widths for alignment
+        let price_width = 8;
+        let shares_width = 12;
+        let total_width = 14;
+        let columns_width = price_width + shares_width + total_width;
+
+        // Calculate left padding to right-align all columns within the panel
+        let left_padding = panel_width.saturating_sub(columns_width);
+
         let mut level_lines: Vec<Line> = Vec::new();
 
-        // Header
-        level_lines.push(Line::from(vec![
-            Span::styled("  PRICE    ", Style::default().fg(Color::DarkGray).bold()),
-            Span::styled("SHARES     ", Style::default().fg(Color::DarkGray).bold()),
-            Span::styled("TOTAL", Style::default().fg(Color::DarkGray).bold()),
-        ]));
+        // Header - right aligned
+        let header = format!(
+            "{:padding$}{:>price$}{:>shares$}{:>total$}",
+            "",
+            "PRICE",
+            "SHARES",
+            "TOTAL",
+            padding = left_padding,
+            price = price_width,
+            shares = shares_width,
+            total = total_width
+        );
+        level_lines.push(Line::from(vec![Span::styled(
+            header,
+            Style::default().fg(Color::DarkGray).bold(),
+        )]));
 
         // Helper to format price in cents or dollars
         let format_price = |price: f64| -> String {
             let cents = price * 100.0;
             if cents >= 100.0 {
-                format!("  ${:.2}   ", price)
+                format!("${:.2}", price)
             } else if cents >= 1.0 {
-                format!("  {:>5.1}¢   ", cents)
+                format!("{:.1}¢", cents)
             } else {
-                format!("  {:>5.2}¢   ", cents)
+                format!("{:.2}¢", cents)
             }
         };
+
+        // Helper to format a level line with proper alignment
+        let format_level =
+            |level: &crate::trending_tui::state::OrderbookLevel, price_color: Color| -> Line {
+                let price_str = format_price(level.price);
+                let shares_str = format!("{:.0}", level.size);
+                let total_str = format!("${:.2}", level.total);
+
+                let padding_span = Span::raw(" ".repeat(left_padding));
+                let price_span = Span::styled(
+                    format!("{:>width$}", price_str, width = price_width),
+                    Style::default().fg(price_color),
+                );
+                let shares_span = Span::styled(
+                    format!("{:>width$}", shares_str, width = shares_width),
+                    Style::default().fg(Color::White),
+                );
+                let total_span = Span::styled(
+                    format!("{:>width$}", total_str, width = total_width),
+                    Style::default().fg(Color::White),
+                );
+
+                Line::from(vec![padding_span, price_span, shares_span, total_span])
+            };
 
         // Asks (sell orders) - show in descending price order
         let asks_count = (visible_rows.saturating_sub(2)) / 2;
         for level in orderbook.asks.iter().take(asks_count).rev() {
-            level_lines.push(Line::from(vec![
-                Span::styled(
-                    format_price(level.price),
-                    Style::default().fg(Color::LightRed),
-                ),
-                Span::styled(
-                    format!("{:>10.0}   ", level.size),
-                    Style::default().fg(Color::White),
-                ),
-                Span::styled(
-                    format!("${:.2}", level.total),
-                    Style::default().fg(Color::White),
-                ),
-            ]));
+            level_lines.push(format_level(level, Color::LightRed));
         }
 
-        // Spread separator
+        // Spread separator - right aligned
         if let Some(spread) = orderbook.spread {
             let spread_cents = spread * 100.0;
             let spread_str = if spread_cents >= 1.0 {
-                format!("  ─── Spread: {:.1}¢ ───", spread_cents)
+                format!("─── Spread: {:.1}¢ ───", spread_cents)
             } else {
-                format!("  ─── Spread: {:.2}¢ ───", spread_cents)
+                format!("─── Spread: {:.2}¢ ───", spread_cents)
             };
+            // Center the spread line
+            let spread_padding = panel_width.saturating_sub(spread_str.chars().count()) / 2;
             level_lines.push(Line::from(vec![Span::styled(
-                spread_str,
+                format!(
+                    "{:>width$}",
+                    spread_str,
+                    width = spread_padding + spread_str.len()
+                ),
                 Style::default().fg(Color::Yellow),
             )]));
         }
@@ -4607,20 +4645,7 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
         // Bids (buy orders)
         let bids_count = visible_rows.saturating_sub(level_lines.len());
         for level in orderbook.bids.iter().take(bids_count) {
-            level_lines.push(Line::from(vec![
-                Span::styled(
-                    format_price(level.price),
-                    Style::default().fg(Color::LightGreen),
-                ),
-                Span::styled(
-                    format!("{:>10.0}   ", level.size),
-                    Style::default().fg(Color::White),
-                ),
-                Span::styled(
-                    format!("${:.2}", level.total),
-                    Style::default().fg(Color::White),
-                ),
-            ]));
+            level_lines.push(format_level(level, Color::LightGreen));
         }
 
         let levels_para = Paragraph::new(level_lines).block(levels_block);
