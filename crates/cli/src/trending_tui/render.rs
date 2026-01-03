@@ -4888,15 +4888,13 @@ fn render_orderbook(f: &mut Frame, app: &TrendingAppState, event: &Event, area: 
             Style::default().fg(Color::DarkGray).bold(),
         )]));
 
-        // Helper to format price in cents or dollars
+        // Helper to format price in cents or dollars (1 decimal place for cents)
         let format_price = |price: f64| -> String {
             let cents = price * 100.0;
             if cents >= 100.0 {
                 format!("${:.2}", price)
-            } else if cents >= 1.0 {
-                format!("{:.1}¢", cents)
             } else {
-                format!("{:.2}¢", cents)
+                format!("{:.1}¢", cents)
             }
         };
 
