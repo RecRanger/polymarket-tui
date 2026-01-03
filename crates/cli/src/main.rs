@@ -39,11 +39,11 @@ macro_rules! log_info {
 }
 
 #[derive(Parser)]
-#[command(name = "polymarket-cli")]
-#[command(about = "Polymarket CLI tool for monitoring market data", long_about = None)]
+#[command(name = "polymarket-tui")]
+#[command(about = "Polymarket TUI for browsing and monitoring prediction markets", long_about = None)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -439,10 +439,10 @@ async fn run_watch_event_tui(event_slug: String) -> Result<()> {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Check if we're running a TUI command
+    // Check if we're running a TUI command (None = default TUI, or explicit Trending)
     let _is_tui_command = matches!(
         cli.command,
-        Commands::Trending { .. } | Commands::WatchEvent { tui: true, .. }
+        None | Some(Commands::Trending { .. }) | Some(Commands::WatchEvent { tui: true, .. })
     );
 
     // Initialize tracing subscriber conditionally
@@ -459,29 +459,31 @@ async fn main() -> Result<()> {
     }
 
     match cli.command {
-        Commands::Monitor { rtds, event } => run_monitor(rtds, event).await,
-        Commands::WatchEvent { event, tui } => run_watch_event(event, tui).await,
-        Commands::Orderbook { market, asset } => run_orderbook(market, asset).await,
-        Commands::Trades {
+        // Default to TUI when no command is provided
+        None => run_trending("volume24hr".to_string(), false, 50).await,
+        Some(Commands::Monitor { rtds, event }) => run_monitor(rtds, event).await,
+        Some(Commands::WatchEvent { event, tui }) => run_watch_event(event, tui).await,
+        Some(Commands::Orderbook { market, asset }) => run_orderbook(market, asset).await,
+        Some(Commands::Trades {
             market,
             limit,
             asset,
             event_id,
             event_slug,
-        } => run_trades(market, limit, asset, event_id, event_slug).await,
-        Commands::Event { event, id } => run_event(event, id).await,
-        Commands::Market { market, id } => run_market(market, id).await,
-        Commands::Trending {
+        }) => run_trades(market, limit, asset, event_id, event_slug).await,
+        Some(Commands::Event { event, id }) => run_event(event, id).await,
+        Some(Commands::Market { market, id }) => run_market(market, id).await,
+        Some(Commands::Trending {
             order_by,
             ascending,
             limit,
-        } => run_trending(order_by, ascending, limit).await,
-        Commands::Yield {
+        }) => run_trending(order_by, ascending, limit).await,
+        Some(Commands::Yield {
             min_prob,
             limit,
             min_volume,
             expires_in,
-        } => run_yield(min_prob, limit, min_volume, expires_in).await,
+        }) => run_yield(min_prob, limit, min_volume, expires_in).await,
     }
 }
 

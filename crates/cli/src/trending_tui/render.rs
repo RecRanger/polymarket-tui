@@ -22,10 +22,9 @@ use {
 /// Unified tab enum for click detection (combines MainTab and EventFilter)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClickedTab {
-    Trending,
+    Trending, // Displayed as "Events"
     Favorites,
     Breaking,
-    New,
     Yield,
 }
 
@@ -143,20 +142,18 @@ pub fn get_clicked_tab(x: u16, y: u16, size: Rect, app: &TrendingAppState) -> Op
     }
 
     // Actual rendered output (Tabs widget adds leading space and " " divider):
-    // " Trending [1] Favorites [2] Breaking [3] New [4] Yield [5]"
-    // 0         1         2         3         4         5         6
-    // 0123456789012345678901234567890123456789012345678901234567890
-    //  Trending [1] Favorites [2] Breaking [3] New [4] Yield [5]
-    // Positions: 1-12 = Trending, 14-27 = Favorites, 29-41 = Breaking, 43-50 = New, 52-61 = Yield
-    if x <= 12 {
+    // " Events [1] Favorites [2] Breaking [3] Yield [4]"
+    // 0         1         2         3         4         5
+    // 012345678901234567890123456789012345678901234567890
+    //  Events [1] Favorites [2] Breaking [3] Yield [4]
+    // Positions: 1-10 = Events, 12-25 = Favorites, 27-38 = Breaking, 40-49 = Yield
+    if x <= 10 {
         return Some(ClickedTab::Trending);
-    } else if (14..28).contains(&x) {
+    } else if (12..26).contains(&x) {
         return Some(ClickedTab::Favorites);
-    } else if (29..42).contains(&x) {
+    } else if (27..39).contains(&x) {
         return Some(ClickedTab::Breaking);
-    } else if (43..51).contains(&x) {
-        return Some(ClickedTab::New);
-    } else if (52..62).contains(&x) {
+    } else if (40..50).contains(&x) {
         return Some(ClickedTab::Yield);
     }
     None
@@ -302,15 +299,14 @@ pub fn render(f: &mut Frame, app: &mut TrendingAppState) {
 }
 
 fn render_header(f: &mut Frame, app: &TrendingAppState, area: Rect) {
-    // Calculate unified tab index: 0=Trending, 1=Favorites, 2=Breaking, 3=New, 4=Yield
+    // Calculate unified tab index: 0=Events, 1=Favorites, 2=Breaking, 3=Yield
     let tab_index = match app.main_tab {
         MainTab::Trending => match app.event_filter {
             EventFilter::Trending => 0,
             EventFilter::Breaking => 2,
-            EventFilter::New => 3,
         },
         MainTab::Favorites => 1,
-        MainTab::Yield => 4,
+        MainTab::Yield => 3,
     };
 
     if app.is_in_filter_mode() {
@@ -326,11 +322,10 @@ fn render_header(f: &mut Frame, app: &TrendingAppState, area: Rect) {
 
         // Render unified tabs
         let tab_titles: Vec<Line> = vec![
-            Line::from("Trending [1]"),
+            Line::from("Events [1]"),
             Line::from("Favorites [2]"),
             Line::from("Breaking [3]"),
-            Line::from("New [4]"),
-            Line::from("Yield [5]"),
+            Line::from("Yield [4]"),
         ];
         let tabs = Tabs::new(tab_titles)
             .select(tab_index)
@@ -434,11 +429,10 @@ fn render_header(f: &mut Frame, app: &TrendingAppState, area: Rect) {
 
         // Render unified tabs in gitui-style (underline for selected, keyboard shortcuts)
         let tab_titles: Vec<Line> = vec![
-            Line::from("Trending [1]"),
+            Line::from("Events [1]"),
             Line::from("Favorites [2]"),
             Line::from("Breaking [3]"),
-            Line::from("New [4]"),
-            Line::from("Yield [5]"),
+            Line::from("Yield [4]"),
         ];
         let tabs = Tabs::new(tab_titles)
             .select(tab_index)
@@ -600,7 +594,7 @@ fn render_favorites_tab(f: &mut Frame, app: &TrendingAppState, area: Rect) {
 
     // Show empty state
     if favorites_state.events.is_empty() {
-        let empty = Paragraph::new("No favorites yet.\n\nBrowse events in the Trending tab and press 'f' to favorite them.")
+        let empty = Paragraph::new("No favorites yet.\n\nBrowse events in the Events tab and press 'b' to bookmark them.")
             .block(
                 Block::default()
                     .title(" Favorites ")
@@ -895,13 +889,16 @@ fn render_yield_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         block = block.title_bottom(Line::from(" Searching... ").centered());
     }
 
-    let table = Table::new(rows, [
-        Constraint::Fill(1),   // Market name (takes remaining space)
-        Constraint::Length(7), // Return (e.g., "12.34%")
-        Constraint::Length(7), // Price (e.g., "95.5¢")
-        Constraint::Length(8), // Volume (e.g., "$123.4K")
-        Constraint::Length(7), // Expires (e.g., "expired")
-    ])
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Fill(1),   // Market name (takes remaining space)
+            Constraint::Length(7), // Return (e.g., "12.34%")
+            Constraint::Length(7), // Price (e.g., "95.5¢")
+            Constraint::Length(8), // Volume (e.g., "$123.4K")
+            Constraint::Length(7), // Expires (e.g., "expired")
+        ],
+    )
     .header(
         Row::new(vec!["Market", "Return", "Price", "Volume", "Expires"])
             .style(
@@ -949,47 +946,101 @@ fn render_yield_details(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(10), // Event info
-                Constraint::Min(0),     // Market details
+                Constraint::Length(9), // Event info (matching Events tab)
+                Constraint::Min(0),    // Market details
             ])
             .split(area);
 
-        // Event info panel
+        // Format end date with relative time (matching Events tab)
         let end_date_str = opp
             .end_date
-            .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
+            .map(|dt| {
+                let now = Utc::now();
+                let duration = dt.signed_duration_since(now);
+                if duration.num_days() > 0 {
+                    format!("{} days", duration.num_days())
+                } else if duration.num_hours() > 0 {
+                    format!("{} hours", duration.num_hours())
+                } else if duration.num_minutes() > 0 {
+                    format!("{} min", duration.num_minutes())
+                } else if duration.num_seconds() < 0 {
+                    format!("Expired ({})", dt.format("%Y-%m-%d %H:%M UTC"))
+                } else {
+                    format!("{}", dt.format("%Y-%m-%d %H:%M UTC"))
+                }
+            })
             .unwrap_or_else(|| "N/A".to_string());
 
         let event_url = format!("https://polymarket.com/event/{}", opp.event_slug);
 
-        let event_lines = vec![
+        // Format total volume
+        let total_volume = opp.event_total_volume;
+        let volume_str = if total_volume >= 1_000_000.0 {
+            format!("${:.1}M", total_volume / 1_000_000.0)
+        } else if total_volume >= 1_000.0 {
+            format!("${:.1}K", total_volume / 1_000.0)
+        } else {
+            format!("${:.0}", total_volume)
+        };
+
+        // Build event lines matching Events tab format
+        let mut event_lines = vec![
+            // Slug
             Line::from(vec![
-                Span::styled("Event: ", Style::default().fg(Color::Yellow).bold()),
-                Span::styled(
-                    truncate(&opp.event_title, 50),
-                    Style::default().fg(Color::White),
-                ),
+                Span::styled("Slug: ", Style::default().fg(Color::Yellow).bold()),
+                Span::styled(truncate(&opp.event_slug, 60), Style::default().fg(Color::Blue)),
             ]),
+            // URL
+            Line::from(vec![
+                Span::styled("URL: ", Style::default().fg(Color::Yellow).bold()),
+                Span::styled(event_url, Style::default().fg(Color::Cyan)),
+            ]),
+            // Status: Active/Inactive | Open/Closed
             Line::from(vec![
                 Span::styled("Status: ", Style::default().fg(Color::Yellow).bold()),
                 Span::styled(
-                    opp.event_status,
-                    Style::default().fg(if opp.event_status == "active" {
+                    if opp.event_active { "Active" } else { "Inactive" },
+                    Style::default().fg(if opp.event_active {
                         Color::Green
                     } else {
                         Color::Red
                     }),
                 ),
+                Span::styled(" | ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    if opp.event_closed { "Closed" } else { "Open" },
+                    Style::default().fg(if opp.event_closed {
+                        Color::Red
+                    } else {
+                        Color::Green
+                    }),
+                ),
             ]),
+            // Estimated End
             Line::from(vec![
-                Span::styled("Ends: ", Style::default().fg(Color::Yellow).bold()),
+                Span::styled("Estimated End: ", Style::default().fg(Color::Yellow).bold()),
                 Span::styled(end_date_str, Style::default().fg(Color::Magenta)),
             ]),
+            // Total Volume
             Line::from(vec![
-                Span::styled("URL: ", Style::default().fg(Color::Yellow).bold()),
-                Span::styled(event_url, Style::default().fg(Color::Cyan)),
+                Span::styled("Total Volume: ", Style::default().fg(Color::Yellow).bold()),
+                Span::styled(
+                    volume_str,
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ]),
         ];
+
+        // Add tags if available
+        if !opp.event_tags.is_empty() {
+            let tags_text = opp.event_tags.join(", ");
+            event_lines.push(Line::from(vec![
+                Span::styled("Tags: ", Style::default().fg(Color::Yellow).bold()),
+                Span::styled(truncate(&tags_text, 50), Style::default().fg(Color::Cyan)),
+            ]));
+        }
 
         let is_details_focused = app.navigation.focused_panel == FocusedPanel::EventDetails;
         let event_block_style = if is_details_focused {
@@ -998,13 +1049,16 @@ fn render_yield_details(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             Style::default()
         };
 
+        // Build title with event name (matching Events tab)
+        let title_max_width = chunks[0].width.saturating_sub(12) as usize;
+        let title = format!("Event: {}", truncate(&opp.event_title, title_max_width));
+
         let event_info = Paragraph::new(event_lines)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .border_type(BorderType::Rounded)
-                    .title("Event")
+                    .title(title)
                     .border_style(event_block_style),
             )
             .wrap(Wrap { trim: true });
@@ -1019,7 +1073,7 @@ fn render_yield_details(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             Color::Red
         };
 
-        let volume_str = if opp.volume >= 1_000_000.0 {
+        let market_volume_str = if opp.volume >= 1_000_000.0 {
             format!("${:.1}M", opp.volume / 1_000_000.0)
         } else if opp.volume >= 1_000.0 {
             format!("${:.1}K", opp.volume / 1_000.0)
@@ -1077,11 +1131,11 @@ fn render_yield_details(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             ]),
             Line::from(vec![
                 Span::styled("24h Volume: ", Style::default().fg(Color::Yellow).bold()),
-                Span::styled(volume_str, Style::default().fg(Color::Green)),
+                Span::styled(market_volume_str, Style::default().fg(Color::Green)),
             ]),
             Line::from(""),
             Line::from(vec![Span::styled(
-                "💡 Buy at this price, get full $1 if outcome occurs",
+                "Buy at this price, get full $1 if outcome occurs",
                 Style::default().fg(Color::DarkGray),
             )]),
         ];
@@ -1271,13 +1325,16 @@ fn render_yield_search_results(f: &mut Frame, app: &TrendingAppState, area: Rect
         block = block.title_bottom(Line::from(" Searching... ").centered());
     }
 
-    let table = Table::new(rows, [
-        Constraint::Fill(1),   // Event title
-        Constraint::Length(9), // Yield (e.g., "No yield")
-        Constraint::Length(8), // Volume
-        Constraint::Length(3), // Markets count
-        Constraint::Length(7), // Expires
-    ])
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Fill(1),   // Event title
+            Constraint::Length(9), // Yield (e.g., "No yield")
+            Constraint::Length(8), // Volume
+            Constraint::Length(3), // Markets count
+            Constraint::Length(7), // Expires
+        ],
+    )
     .header(
         Row::new(vec!["Event", "Yield", "Volume", "Mkt", "Expires"])
             .style(
@@ -1577,57 +1634,66 @@ fn render_popup(f: &mut Frame, app: &TrendingAppState, popup: &PopupType) {
     f.render_widget(Clear, area);
 
     let (title, content) = match popup {
-        PopupType::Help => ("Help - Keyboard Shortcuts", vec![
-            Line::from(vec![Span::styled(
-                "Navigation:",
-                Style::default().fg(Color::Yellow).bold(),
-            )]),
-            Line::from("  ↑/k, ↓/j  - Move up/down in lists"),
-            Line::from("  Tab       - Switch between panels"),
-            Line::from("  ←/→       - Switch between tabs (Trending/Breaking/New)"),
-            Line::from(""),
-            Line::from(vec![Span::styled(
-                "Actions:",
-                Style::default().fg(Color::Yellow).bold(),
-            )]),
-            Line::from("  Enter     - Toggle watching event for live trades"),
-            Line::from("  /         - API search (searches Polymarket)"),
-            Line::from("  f         - Local filter (filters current list)"),
-            Line::from("  Esc       - Cancel search/filter or close popup"),
-            Line::from(""),
-            Line::from(vec![Span::styled(
-                "Other:",
-                Style::default().fg(Color::Yellow).bold(),
-            )]),
-            Line::from("  ?         - Show this help"),
-            Line::from("  q         - Quit"),
-            Line::from(""),
-            Line::from(vec![Span::styled(
-                "Press Esc to close",
-                Style::default().fg(Color::DarkGray),
-            )]),
-        ]),
-        PopupType::ConfirmQuit => ("Confirm Quit", vec![
-            Line::from(""),
-            Line::from("Are you sure you want to quit?"),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("  y  ", Style::default().fg(Color::Green).bold()),
-                Span::styled("- Yes, quit", Style::default().fg(Color::White)),
-            ]),
-            Line::from(vec![
-                Span::styled("  n  ", Style::default().fg(Color::Red).bold()),
-                Span::styled("- No, cancel", Style::default().fg(Color::White)),
-            ]),
-        ]),
-        PopupType::EventInfo(slug) => ("Event Info", vec![
-            Line::from(format!("Slug: {}", slug)),
-            Line::from(""),
-            Line::from(vec![Span::styled(
-                "Press Esc to close",
-                Style::default().fg(Color::DarkGray),
-            )]),
-        ]),
+        PopupType::Help => (
+            "Help - Keyboard Shortcuts",
+            vec![
+                Line::from(vec![Span::styled(
+                    "Navigation:",
+                    Style::default().fg(Color::Yellow).bold(),
+                )]),
+                Line::from("  ↑/k, ↓/j  - Move up/down in lists"),
+                Line::from("  Tab       - Switch between panels"),
+                Line::from("  ←/→       - Switch between tabs (Trending/Breaking/New)"),
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    "Actions:",
+                    Style::default().fg(Color::Yellow).bold(),
+                )]),
+                Line::from("  Enter     - Toggle watching event for live trades"),
+                Line::from("  /         - API search (searches Polymarket)"),
+                Line::from("  f         - Local filter (filters current list)"),
+                Line::from("  Esc       - Cancel search/filter or close popup"),
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    "Other:",
+                    Style::default().fg(Color::Yellow).bold(),
+                )]),
+                Line::from("  ?         - Show this help"),
+                Line::from("  q         - Quit"),
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    "Press Esc to close",
+                    Style::default().fg(Color::DarkGray),
+                )]),
+            ],
+        ),
+        PopupType::ConfirmQuit => (
+            "Confirm Quit",
+            vec![
+                Line::from(""),
+                Line::from("Are you sure you want to quit?"),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("  y  ", Style::default().fg(Color::Green).bold()),
+                    Span::styled("- Yes, quit", Style::default().fg(Color::White)),
+                ]),
+                Line::from(vec![
+                    Span::styled("  n  ", Style::default().fg(Color::Red).bold()),
+                    Span::styled("- No, cancel", Style::default().fg(Color::White)),
+                ]),
+            ],
+        ),
+        PopupType::EventInfo(slug) => (
+            "Event Info",
+            vec![
+                Line::from(format!("Slug: {}", slug)),
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    "Press Esc to close",
+                    Style::default().fg(Color::DarkGray),
+                )]),
+            ],
+        ),
         // These are handled above with early return
         PopupType::Login | PopupType::UserProfile | PopupType::Trade => unreachable!(),
     };
@@ -2447,6 +2513,29 @@ fn render_trade_popup(f: &mut Frame, app: &TrendingAppState) {
 }
 
 fn render_events_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
+    // Show loading state when events are empty and we're fetching
+    if app.events.is_empty() && app.pagination.is_fetching_more {
+        let is_focused = app.navigation.focused_panel == FocusedPanel::EventsList;
+        let block_style = if is_focused {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default()
+        };
+
+        let loading_text = format!("Loading {} events...", app.event_filter.label());
+        let loading = Paragraph::new(loading_text)
+            .alignment(ratatui::layout::Alignment::Center)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .title(" Events (Loading...) ")
+                    .border_style(block_style),
+            );
+        f.render_widget(loading, area);
+        return;
+    }
+
     let filtered_events = app.filtered_events();
     let scroll = app.current_events_scroll();
     let selected_index = app.current_selected_index();
@@ -2485,21 +2574,41 @@ fn render_events_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             let markets_count = event.markets.len();
             let markets_str = format!("{:>width$}", markets_count, width = max_markets_width);
 
-            // Calculate total volume from all markets
-            let total_volume: f64 = event
-                .markets
-                .iter()
-                .map(|m| m.volume_24hr.or(m.volume_total).unwrap_or(0.0))
-                .sum();
-            let volume_str = if total_volume >= 1_000_000.0 {
-                format!("${:.1}M", total_volume / 1_000_000.0)
-            } else if total_volume >= 1_000.0 {
-                format!("${:.0}K", total_volume / 1_000.0)
-            } else if total_volume > 0.0 {
-                format!("${:.0}", total_volume)
-            } else {
-                String::new()
-            };
+            // For Breaking tab, show price change; for other tabs, show volume
+            let (metric_str, metric_color) =
+                if app.event_filter == crate::trending_tui::state::EventFilter::Breaking {
+                    // Show price change percentage for Breaking tab
+                    if let Some(price_change) = event.max_price_change_24hr {
+                        let change_str = format!("{:+.0}%", price_change * 100.0);
+                        let color = if price_change >= 0.0 {
+                            Color::Green
+                        } else {
+                            Color::Red
+                        };
+                        (change_str, color)
+                    } else {
+                        (String::new(), Color::Green)
+                    }
+                } else {
+                    // Calculate total volume from all markets for other tabs
+                    let total_volume: f64 = event
+                        .markets
+                        .iter()
+                        .map(|m| m.volume_24hr.or(m.volume_total).unwrap_or(0.0))
+                        .sum();
+                    let volume_str = if total_volume >= 1_000_000.0 {
+                        format!("${:.1}M", total_volume / 1_000_000.0)
+                    } else if total_volume >= 1_000.0 {
+                        format!("${:.0}K", total_volume / 1_000.0)
+                    } else if total_volume > 0.0 {
+                        format!("${:.0}", total_volume)
+                    } else {
+                        String::new()
+                    };
+                    (volume_str, Color::Green)
+                };
+            let volume_str = metric_str;
+            let volume_color = metric_color;
 
             // Format: "title ...spaces... [trades] volume markets" (right-aligned)
             // Account for List widget borders (2 chars) and some padding
@@ -2583,7 +2692,7 @@ fn render_events_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             }
 
             // Add the right-aligned text with appropriate styling
-            // Trade count in yellow, volume in green, markets in cyan
+            // Trade count in yellow, volume/price-change in green/red, markets in cyan
             if trade_count > 0 {
                 line_spans.push(Span::styled(
                     format!("{} ", trade_count),
@@ -2593,7 +2702,7 @@ fn render_events_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             if !volume_str.is_empty() {
                 line_spans.push(Span::styled(
                     volume_str.clone(),
-                    Style::default().fg(Color::Green),
+                    Style::default().fg(volume_color),
                 ));
                 line_spans.push(Span::styled(" ", Style::default()));
             }
@@ -2617,9 +2726,17 @@ fn render_events_list(f: &mut Frame, app: &TrendingAppState, area: Rect) {
         Style::default()
     };
 
-    // Build title with count
+    // Build title with count and search query if applicable
     let event_count = app.filtered_events().len();
-    let title = format!("Events ({})", event_count);
+    let title = if !app.search.last_searched_query.is_empty() && !app.search.results.is_empty() {
+        // Show search query in title when displaying API search results
+        format!(
+            "Events ({}) - \"{}\"",
+            event_count, app.search.last_searched_query
+        )
+    } else {
+        format!("Events ({})", event_count)
+    };
 
     // Build block with optional bottom title for loading status
     let mut block = Block::default()
@@ -2804,16 +2921,19 @@ fn render_trades(f: &mut Frame, app: &TrendingAppState, area: Rect) {
                 })
                 .collect();
 
-            let table = Table::new(rows, [
-                Constraint::Length(9),  // Time
-                Constraint::Length(5),  // Side
-                Constraint::Length(4),  // Outcome
-                Constraint::Length(8),  // Price
-                Constraint::Length(9),  // Shares
-                Constraint::Length(9),  // Value
-                Constraint::Fill(1),    // Market (takes remaining space)
-                Constraint::Length(12), // User
-            ])
+            let table = Table::new(
+                rows,
+                [
+                    Constraint::Length(9),  // Time
+                    Constraint::Length(5),  // Side
+                    Constraint::Length(4),  // Outcome
+                    Constraint::Length(8),  // Price
+                    Constraint::Length(9),  // Shares
+                    Constraint::Length(9),  // Value
+                    Constraint::Fill(1),    // Market (takes remaining space)
+                    Constraint::Length(12), // User
+                ],
+            )
             .header(
                 Row::new(vec![
                     "Time", "Side", "Out", "Price", "Shares", "Value", "Market", "User",

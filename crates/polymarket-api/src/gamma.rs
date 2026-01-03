@@ -145,6 +145,10 @@ pub struct Event {
     /// Total liquidity
     #[serde(default)]
     pub liquidity: Option<f64>,
+    /// Max price change in the last 24 hours across all markets (for Breaking tab)
+    /// This is populated when fetching breaking events, not from the API directly
+    #[serde(skip)]
+    pub max_price_change_24hr: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -198,6 +202,9 @@ pub struct Market {
     /// Events this market belongs to (always 0 or 1 element)
     #[serde(default)]
     pub events: Vec<MarketEventRef>,
+    /// Price change in the last 24 hours (used for Breaking tab sorting)
+    #[serde(rename = "oneDayPriceChange", default)]
+    pub one_day_price_change: Option<f64>,
 }
 
 impl Market {
@@ -380,6 +387,78 @@ impl GammaClient {
         log_info!("GET {} -> status: {}", url, _status);
 
         let events: Vec<Event> = response.json().await?;
+        Ok(events)
+    }
+
+    /// Get breaking events - markets that moved the most in the last 24 hours
+    ///
+    /// This fetches markets ordered by price change and extracts unique events.
+    /// Unlike the events endpoint, the markets endpoint supports ordering by
+    /// oneDayPriceChange which is what Polymarket's "Breaking" page uses.
+    ///
+    /// # Arguments
+    /// * `limit` - Maximum number of events to return (default 50)
+    pub async fn get_breaking_events(&self, limit: Option<usize>) -> Result<Vec<Event>> {
+        let limit = limit.unwrap_or(50);
+        // Fetch more markets than needed since we dedupe by event
+        let market_limit = limit * 3;
+
+        let url = format!(
+            "{}/markets?active=true&closed=false&order=oneDayPriceChange&ascending=false&limit={}",
+            GAMMA_API_BASE, market_limit
+        );
+
+        log_info!("GET {}", url);
+
+        let response = self.client.get(&url).send().await?;
+        let _status = response.status();
+
+        log_info!("GET {} -> status: {}", url, _status);
+
+        let markets: Vec<Market> = response.json().await?;
+
+        // Extract unique events from markets, preserving order (biggest movers first)
+        // Also track the max price change for each event
+        let mut seen_event_ids = std::collections::HashSet::new();
+        let mut event_price_changes: std::collections::HashMap<String, f64> =
+            std::collections::HashMap::new();
+        let mut events = Vec::new();
+
+        for market in &markets {
+            if let Some(event_ref) = market.event() {
+                // Track the max absolute price change for this event
+                if let Some(price_change) = market.one_day_price_change {
+                    let abs_change = price_change.abs();
+                    event_price_changes
+                        .entry(event_ref.id.clone())
+                        .and_modify(|e| *e = e.max(abs_change))
+                        .or_insert(abs_change);
+                }
+            }
+        }
+
+        for market in markets {
+            if let Some(event_ref) = market.event()
+                && seen_event_ids.insert(event_ref.id.clone())
+            {
+                // Fetch full event data for this event
+                if let Ok(Some(mut full_event)) = self.get_event_by_id(&event_ref.id).await {
+                    // Set the max price change we tracked earlier
+                    full_event.max_price_change_24hr =
+                        event_price_changes.get(&event_ref.id).copied();
+                    events.push(full_event);
+                    if events.len() >= limit {
+                        break;
+                    }
+                }
+            }
+        }
+
+        log_info!(
+            "Fetched {} breaking events from {} markets",
+            events.len(),
+            market_limit
+        );
         Ok(events)
     }
 

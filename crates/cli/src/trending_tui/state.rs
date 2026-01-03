@@ -113,41 +113,38 @@ impl MainTab {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventFilter {
     Trending, // Order by volume24hr (default)
-    Breaking, // Order by startTime
-    New,      // Order by creationTime/createdAt
+    Breaking, // Order by oneDayPriceChange (biggest movers)
 }
 
 impl EventFilter {
     pub fn order_by(&self) -> &'static str {
         match self {
             EventFilter::Trending => "volume24hr",
-            EventFilter::Breaking => "startDate",
-            EventFilter::New => "createdAt",
+            EventFilter::Breaking => "oneDayPriceChange",
         }
     }
 
     #[allow(dead_code)]
     pub fn label(&self) -> &'static str {
         match self {
-            EventFilter::Trending => "Trending",
+            EventFilter::Trending => "Events",
             EventFilter::Breaking => "Breaking",
-            EventFilter::New => "New",
         }
     }
 
+    #[allow(dead_code)]
     pub fn next(&self) -> Self {
         match self {
             EventFilter::Trending => EventFilter::Breaking,
-            EventFilter::Breaking => EventFilter::New,
-            EventFilter::New => EventFilter::Trending,
+            EventFilter::Breaking => EventFilter::Trending,
         }
     }
 
+    #[allow(dead_code)]
     pub fn prev(&self) -> Self {
         match self {
-            EventFilter::Trending => EventFilter::New,
+            EventFilter::Trending => EventFilter::Breaking,
             EventFilter::Breaking => EventFilter::Trending,
-            EventFilter::New => EventFilter::Breaking,
         }
     }
 }
@@ -618,8 +615,14 @@ pub struct YieldOpportunity {
     pub volume: f64,
     pub event_slug: String,
     pub event_title: String,
+    #[allow(dead_code)]
     pub event_status: &'static str,
     pub end_date: Option<DateTime<Utc>>,
+    // Additional event fields for consistent display with Events tab
+    pub event_active: bool,
+    pub event_closed: bool,
+    pub event_tags: Vec<String>, // Tag labels
+    pub event_total_volume: f64, // Total volume across all markets
 }
 
 /// A search result in the Yield tab - an event with its best yield opportunity (if any)
@@ -955,10 +958,11 @@ impl TrendingAppState {
     pub fn new(events: Vec<Event>, order_by: String, ascending: bool, has_clob_auth: bool) -> Self {
         let current_limit = events.len();
         // Determine initial filter based on order_by
-        let event_filter = if order_by == "startDate" || order_by == "startTime" {
+        let event_filter = if order_by == "startDate"
+            || order_by == "startTime"
+            || order_by == "oneDayPriceChange"
+        {
             EventFilter::Breaking
-        } else if order_by == "createdAt" || order_by == "creationTime" {
-            EventFilter::New
         } else {
             EventFilter::Trending
         };
