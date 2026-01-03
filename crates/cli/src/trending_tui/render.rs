@@ -1394,18 +1394,15 @@ fn render_yield_details(f: &mut Frame, app: &TrendingAppState, area: Rect) {
             f.render_widget(market_details, chunks[1]);
         } else {
             // Event not in cache - show loading message
-            let loading = Paragraph::new(format!(
-                "Loading event details for {}...\nPress 'r' to refresh.",
-                opp.event_slug
-            ))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .title("Event Details"),
-            )
-            .alignment(Alignment::Center)
-            .style(Style::default().fg(Color::Yellow));
+            let loading = Paragraph::new("Loading event details...")
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
+                        .title("Event Details"),
+                )
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(Color::Yellow));
             f.render_widget(loading, area);
         }
     } else {
@@ -1797,19 +1794,16 @@ fn render_yield_search_details(f: &mut Frame, app: &TrendingAppState, area: Rect
                 f.render_widget(no_yield, chunks[1]);
             }
         } else {
-            // Event not in cache
-            let loading = Paragraph::new(format!(
-                "Loading event details for {}...\nPress 'r' to refresh.",
-                result.event_slug
-            ))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .title("Event Details"),
-            )
-            .alignment(Alignment::Center)
-            .style(Style::default().fg(Color::Yellow));
+            // Event not in cache - show loading message
+            let loading = Paragraph::new("Loading event details...")
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
+                        .title("Event Details"),
+                )
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(Color::Yellow));
             f.render_widget(loading, area);
         }
     } else {

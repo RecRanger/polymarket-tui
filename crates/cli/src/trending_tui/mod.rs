@@ -550,6 +550,30 @@ fn spawn_fetch_and_toggle_favorite(
     });
 }
 
+/// Spawn async task to fetch an event by slug and add it to the cache
+/// Used when an event is missing from cache (e.g., yield opportunities from markets endpoint)
+fn spawn_fetch_event_for_cache(app_state: Arc<TokioMutex<TrendingAppState>>, event_slug: String) {
+    let gamma_client = GammaClient::new();
+
+    tokio::spawn(async move {
+        log_info!("Fetching event for cache: {}", event_slug);
+
+        match gamma_client.get_event_by_slug(&event_slug).await {
+            Ok(Some(event)) => {
+                log_info!("Cached event: {} ({} markets)", event.title, event.markets.len());
+                let mut app = app_state.lock().await;
+                app.event_cache.insert(event_slug, event);
+            },
+            Ok(None) => {
+                log_warn!("Event not found: {}", event_slug);
+            },
+            Err(e) => {
+                log_error!("Failed to fetch event {}: {}", event_slug, e);
+            },
+        }
+    });
+}
+
 /// Fetch trade count for an event's markets using authenticated CLOB API
 /// Returns total number of trades across all markets in the event
 async fn fetch_event_trade_count(
@@ -746,6 +770,7 @@ async fn fetch_yield_opportunities(
 
 /// Spawn async task to fetch yield opportunities
 fn spawn_yield_fetch(app_state: Arc<TokioMutex<TrendingAppState>>) {
+    let app_state_clone = Arc::clone(&app_state);
     tokio::spawn(async move {
         let (min_prob, min_volume) = {
             let mut app = app_state.lock().await;
@@ -760,17 +785,30 @@ fn spawn_yield_fetch(app_state: Arc<TokioMutex<TrendingAppState>>) {
 
         let opportunities = fetch_yield_opportunities(min_prob, 500, min_volume).await;
 
-        let mut app = app_state.lock().await;
-        app.yield_state.opportunities = opportunities;
-        app.yield_state.is_loading = false;
-        app.yield_state.selected_index = 0;
-        app.yield_state.scroll = 0;
-        app.yield_state.sort_opportunities();
+        let slug_to_fetch = {
+            let mut app = app_state.lock().await;
+            app.yield_state.opportunities = opportunities;
+            app.yield_state.is_loading = false;
+            app.yield_state.selected_index = 0;
+            app.yield_state.scroll = 0;
+            app.yield_state.sort_opportunities();
 
-        log_info!(
-            "Loaded {} yield opportunities",
-            app.yield_state.opportunities.len()
-        );
+            log_info!(
+                "Loaded {} yield opportunities",
+                app.yield_state.opportunities.len()
+            );
+
+            // Check if the first selected event needs to be fetched
+            app.yield_state
+                .selected_opportunity()
+                .filter(|opp| app.get_cached_event(&opp.event_slug).is_none())
+                .map(|opp| opp.event_slug.clone())
+        };
+
+        // Fetch the event if not in cache (outside the lock)
+        if let Some(slug) = slug_to_fetch {
+            spawn_fetch_event_for_cache(app_state_clone, slug);
+        }
     });
 }
 
@@ -1538,6 +1576,17 @@ pub async fn run_trending_tui(
                                 // In Yield tab, scroll yield list or search results
                                 if app.main_tab == MainTab::Yield {
                                     app.yield_state.move_up();
+                                    // Fetch event if not in cache
+                                    if let Some(opp) = app.yield_state.selected_opportunity() {
+                                        let slug = opp.event_slug.clone();
+                                        if app.get_cached_event(&slug).is_none() {
+                                            drop(app);
+                                            spawn_fetch_event_for_cache(
+                                                Arc::clone(&app_state),
+                                                slug,
+                                            );
+                                        }
+                                    }
                                 } else {
                                     app.move_up();
                                 }
@@ -1585,6 +1634,17 @@ pub async fn run_trending_tui(
                                     // Use approximate visible height for yield list
                                     let visible_height = 20;
                                     app.yield_state.move_down(visible_height);
+                                    // Fetch event if not in cache
+                                    if let Some(opp) = app.yield_state.selected_opportunity() {
+                                        let slug = opp.event_slug.clone();
+                                        if app.get_cached_event(&slug).is_none() {
+                                            drop(app);
+                                            spawn_fetch_event_for_cache(
+                                                Arc::clone(&app_state),
+                                                slug,
+                                            );
+                                        }
+                                    }
                                 } else {
                                     app.move_down();
                                     // Check if we need to fetch more events (infinite scroll)
@@ -2519,6 +2579,16 @@ pub async fn run_trending_tui(
                             // Handle yield tab navigation
                             if app.main_tab == MainTab::Yield {
                                 app.yield_state.move_up();
+                                // Fetch event if not in cache
+                                if let Some(opp) = app.yield_state.selected_opportunity() {
+                                    let slug = opp.event_slug.clone();
+                                    if app.get_cached_event(&slug).is_none() {
+                                        spawn_fetch_event_for_cache(
+                                            Arc::clone(&app_state),
+                                            slug,
+                                        );
+                                    }
+                                }
                                 continue;
                             }
                             match app.navigation.focused_panel {
@@ -2631,6 +2701,16 @@ pub async fn run_trending_tui(
                                 // Calculate visible height (approximate)
                                 let visible_height = 20; // Approximate visible rows
                                 app.yield_state.move_down(visible_height);
+                                // Fetch event if not in cache
+                                if let Some(opp) = app.yield_state.selected_opportunity() {
+                                    let slug = opp.event_slug.clone();
+                                    if app.get_cached_event(&slug).is_none() {
+                                        spawn_fetch_event_for_cache(
+                                            Arc::clone(&app_state),
+                                            slug,
+                                        );
+                                    }
+                                }
                                 continue;
                             }
                             match app.navigation.focused_panel {
