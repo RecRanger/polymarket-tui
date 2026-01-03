@@ -2741,28 +2741,68 @@ pub async fn run_trending_tui(
                             if app.search.mode == SearchMode::ApiSearch {
                                 search_debounce = Some(tokio::time::Instant::now());
                             }
-                        } else if app.main_tab == MainTab::Trending && !app.has_popup() {
+                        } else if matches!(app.main_tab, MainTab::Trending | MainTab::Favorites)
+                            && !app.has_popup()
+                        {
                             // Toggle orderbook outcome and fetch new data
                             app.orderbook_state.toggle_outcome();
+                            let new_outcome = app.orderbook_state.selected_outcome;
+                            log_info!(
+                                "Toggled orderbook to {:?}, market_idx={}",
+                                new_outcome,
+                                app.orderbook_state.selected_market_index
+                            );
                             // token_ids[0] = Yes, token_ids[1] = No
-                            let outcome_idx = match app.orderbook_state.selected_outcome {
+                            let outcome_idx = match new_outcome {
                                 state::OrderbookOutcome::Yes => 0,
                                 state::OrderbookOutcome::No => 1,
                             };
                             // Trigger orderbook fetch for the new outcome (use sorted markets)
-                            let orderbook_token_id = app.selected_event().and_then(|event| {
-                                let mut sorted_markets: Vec<_> = event.markets.iter().collect();
-                                sorted_markets.sort_by_key(|m| m.closed);
-                                let market_idx = app.orderbook_state.selected_market_index;
-                                sorted_markets.get(market_idx).and_then(|market| {
-                                    market
-                                        .clob_token_ids
-                                        .as_ref()
-                                        .and_then(|ids| ids.get(outcome_idx).cloned())
+                            // Get event from appropriate source based on tab
+                            let orderbook_token_id = if app.main_tab == MainTab::Favorites {
+                                app.favorites_state.selected_event().and_then(|event| {
+                                    let mut sorted_markets: Vec<_> = event.markets.iter().collect();
+                                    sorted_markets.sort_by_key(|m| m.closed);
+                                    let market_idx = app.orderbook_state.selected_market_index;
+                                    sorted_markets.get(market_idx).and_then(|market| {
+                                        log_info!(
+                                            "Toggle: market={}, token_ids={:?}",
+                                            market.question,
+                                            market.clob_token_ids
+                                        );
+                                        market
+                                            .clob_token_ids
+                                            .as_ref()
+                                            .and_then(|ids| ids.get(outcome_idx).cloned())
+                                    })
                                 })
-                            });
-                            if let Some(token_id) = orderbook_token_id {
-                                spawn_fetch_orderbook(Arc::clone(&app_state), token_id);
+                            } else {
+                                app.selected_event().and_then(|event| {
+                                    let mut sorted_markets: Vec<_> = event.markets.iter().collect();
+                                    sorted_markets.sort_by_key(|m| m.closed);
+                                    let market_idx = app.orderbook_state.selected_market_index;
+                                    sorted_markets.get(market_idx).and_then(|market| {
+                                        log_info!(
+                                            "Toggle: market={}, token_ids={:?}",
+                                            market.question,
+                                            market.clob_token_ids
+                                        );
+                                        market
+                                            .clob_token_ids
+                                            .as_ref()
+                                            .and_then(|ids| ids.get(outcome_idx).cloned())
+                                    })
+                                })
+                            };
+                            if let Some(ref token_id) = orderbook_token_id {
+                                log_info!(
+                                    "Fetching orderbook for outcome_idx={}, token={}",
+                                    outcome_idx,
+                                    token_id
+                                );
+                                spawn_fetch_orderbook(Arc::clone(&app_state), token_id.clone());
+                            } else {
+                                log_warn!("No token_id found for outcome_idx={}", outcome_idx);
                             }
                         }
                     },
