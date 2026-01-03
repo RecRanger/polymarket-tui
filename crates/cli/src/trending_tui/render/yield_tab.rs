@@ -16,8 +16,8 @@ use {
     },
 };
 
-// Re-use functions from parent module
-use super::{build_event_info_lines, render_search_input};
+// Re-use functions from sibling modules
+use super::utils::{build_event_info_lines, render_search_input};
 
 pub fn render_yield_tab(f: &mut Frame, app: &TrendingAppState, area: Rect) {
     let yield_state = &app.yield_state;

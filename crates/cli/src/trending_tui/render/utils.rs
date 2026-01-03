@@ -1,7 +1,15 @@
 //! Utility functions for rendering
 
 use {
-    ratatui::{layout::Rect, style::Color},
+    chrono::{DateTime, Utc},
+    polymarket_api::gamma::Event,
+    ratatui::{
+        Frame,
+        layout::{Position, Rect},
+        style::{Color, Modifier, Style},
+        text::{Line, Span},
+        widgets::{Block, BorderType, Borders, Paragraph},
+    },
     unicode_width::UnicodeWidthStr,
 };
 
@@ -183,4 +191,248 @@ pub fn centered_rect_fixed_width(width: u16, percent_y: u16, r: Rect) -> Rect {
             Constraint::Length(right_margin),
         ])
         .split(popup_layout[1])[1]
+}
+
+/// Render a search/filter input field with proper styling
+/// Returns the cursor position if the field should show a cursor
+pub fn render_search_input(
+    f: &mut Frame,
+    area: Rect,
+    query: &str,
+    title: &str,
+    placeholder: &str,
+    is_loading: bool,
+    border_color: Color,
+) {
+    // Calculate inner area for the input text
+    let inner_x = area.x + 1;
+    let inner_y = area.y + 1;
+    let inner_width = area.width.saturating_sub(2);
+
+    // Render the block/border
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .title(title)
+        .border_style(Style::default().fg(border_color));
+    f.render_widget(block, area);
+
+    // Input field area with background
+    let input_area = Rect {
+        x: inner_x,
+        y: inner_y,
+        width: inner_width,
+        height: 1,
+    };
+
+    // Determine display text
+    let (display_text, text_style) = if query.is_empty() {
+        // Show placeholder with dark background
+        (
+            placeholder.to_string(),
+            Style::default().fg(Color::DarkGray),
+        )
+    } else if is_loading {
+        // Show query with loading indicator
+        (
+            format!("{} (searching...)", query),
+            Style::default().fg(Color::Cyan).bold(),
+        )
+    } else {
+        // Show query
+        (query.to_string(), Style::default().fg(Color::White).bold())
+    };
+
+    // Pad to fill the field width (creates visible input area with background)
+    let padded_text = format!("{:<width$}", display_text, width = inner_width as usize);
+
+    // Use background color to make input field visible
+    let input_para = Paragraph::new(padded_text).style(text_style.bg(Color::Rgb(40, 40, 40)));
+    f.render_widget(input_para, input_area);
+
+    // Set cursor position at end of query text
+    if !query.is_empty() || is_loading {
+        // Don't show cursor when loading
+        if !is_loading {
+            let cursor_x = inner_x + query.len().min(inner_width as usize - 1) as u16;
+            f.set_cursor_position(Position::new(cursor_x, inner_y));
+        }
+    } else {
+        // Show cursor at start for empty field
+        f.set_cursor_position(Position::new(inner_x, inner_y));
+    }
+}
+
+/// Shared function to build event info lines for display
+/// Used by both Events tab and Yield tab to show consistent event details
+pub fn build_event_info_lines(
+    event: &Event,
+    is_watching: bool,
+    trade_count_display: &str,
+    trade_label: &str,
+    area_width: u16,
+) -> Vec<Line<'static>> {
+    // Calculate total volume from all markets
+    let total_volume: f64 = event
+        .markets
+        .iter()
+        .map(|m| m.volume_24hr.or(m.volume_total).unwrap_or(0.0))
+        .sum();
+
+    // Format end date with relative time
+    let end_date_str = event
+        .end_date
+        .as_ref()
+        .and_then(|date_str| {
+            DateTime::parse_from_rfc3339(date_str)
+                .ok()
+                .map(|dt| dt.with_timezone(&Utc))
+        })
+        .map(|dt| {
+            let now = Utc::now();
+            let duration = dt.signed_duration_since(now);
+            if duration.num_days() > 0 {
+                format!("{} days", duration.num_days())
+            } else if duration.num_hours() > 0 {
+                format!("{} hours", duration.num_hours())
+            } else if duration.num_minutes() > 0 {
+                format!("{} min", duration.num_minutes())
+            } else if duration.num_seconds() < 0 {
+                format!("Expired ({})", dt.format("%Y-%m-%d %H:%M UTC"))
+            } else {
+                format!("{}", dt.format("%Y-%m-%d %H:%M UTC"))
+            }
+        })
+        .unwrap_or_else(|| "N/A".to_string());
+
+    // Format volume
+    let volume_str = if total_volume >= 1_000_000.0 {
+        format!("${:.1}M", total_volume / 1_000_000.0)
+    } else if total_volume >= 1_000.0 {
+        format!("${:.1}K", total_volume / 1_000.0)
+    } else {
+        format!("${:.0}", total_volume)
+    };
+
+    let event_url = format!("https://polymarket.com/event/{}", event.slug);
+
+    // Build lines
+    let mut lines = vec![
+        // Slug
+        Line::from(vec![
+            Span::styled("Slug: ", Style::default().fg(Color::Yellow).bold()),
+            Span::styled(truncate(&event.slug, 60), Style::default().fg(Color::Blue)),
+        ]),
+        // URL
+        Line::from(vec![
+            Span::styled("URL: ", Style::default().fg(Color::Yellow).bold()),
+            Span::styled(event_url, Style::default().fg(Color::Cyan)),
+        ]),
+        // Status: Active/Inactive | Open/Closed | Watching
+        Line::from(vec![
+            Span::styled("Status: ", Style::default().fg(Color::Yellow).bold()),
+            Span::styled(
+                if event.active {
+                    "Active"
+                } else {
+                    "Inactive"
+                },
+                Style::default().fg(if event.active {
+                    Color::Green
+                } else {
+                    Color::Red
+                }),
+            ),
+            Span::styled(" | ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                if event.closed {
+                    "Closed"
+                } else {
+                    "Open"
+                },
+                Style::default().fg(if event.closed {
+                    Color::Red
+                } else {
+                    Color::Green
+                }),
+            ),
+            Span::styled(" | ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                if is_watching {
+                    "Watching"
+                } else {
+                    "Not Watching"
+                },
+                Style::default().fg(if is_watching {
+                    Color::Red
+                } else {
+                    Color::Gray
+                }),
+            ),
+        ]),
+        // Estimated End
+        Line::from(vec![
+            Span::styled("Estimated End: ", Style::default().fg(Color::Yellow).bold()),
+            Span::styled(end_date_str, Style::default().fg(Color::Magenta)),
+        ]),
+        // Total Volume | Trades
+        Line::from(vec![
+            Span::styled("Total Volume: ", Style::default().fg(Color::Yellow).bold()),
+            Span::styled(
+                volume_str,
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" | ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                format!("{}: ", trade_label),
+                Style::default().fg(Color::Yellow).bold(),
+            ),
+            Span::styled(
+                trade_count_display.to_string(),
+                Style::default().fg(if trade_label == "Your Trades" {
+                    Color::Green
+                } else if trade_count_display == "..." {
+                    Color::Yellow
+                } else if is_watching {
+                    Color::Cyan
+                } else {
+                    Color::Gray
+                }),
+            ),
+        ]),
+    ];
+
+    // Add tags if available
+    if !event.tags.is_empty() {
+        let tag_labels: Vec<String> = event
+            .tags
+            .iter()
+            .map(|tag| truncate(&tag.label, 20))
+            .collect();
+        let tags_text = tag_labels.join(", ");
+
+        // Calculate available width for tags
+        let available_width = (area_width as usize).saturating_sub(8);
+        let tags_char_count = tags_text.chars().count();
+
+        if tags_char_count <= available_width {
+            lines.push(Line::from(vec![
+                Span::styled("Tags: ", Style::default().fg(Color::Yellow).bold()),
+                Span::styled(tags_text, Style::default().fg(Color::Cyan)),
+            ]));
+        } else {
+            // Truncate tags if too long
+            lines.push(Line::from(vec![
+                Span::styled("Tags: ", Style::default().fg(Color::Yellow).bold()),
+                Span::styled(
+                    truncate(&tags_text, available_width),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ]));
+        }
+    }
+
+    lines
 }

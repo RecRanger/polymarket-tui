@@ -13,6 +13,45 @@ use {
     },
 };
 
+/// Calculate the required height for the orderbook panel based on data
+/// Uses actual data size when available, preserves last height when loading
+pub fn calculate_orderbook_height(
+    app: &TrendingAppState,
+    event: Option<&polymarket_api::gamma::Event>,
+) -> u16 {
+    const MAX_PER_SIDE: usize = 6;
+    // Min height for message display = borders(2) + title(1) + message(1) = 4
+    const MESSAGE_HEIGHT: u16 = 4;
+
+    // Check if the selected market is closed
+    let market_is_closed = event.is_some_and(|e| {
+        let mut sorted_markets: Vec<_> = e.markets.iter().collect();
+        sorted_markets.sort_by_key(|m| m.closed);
+        let idx = app
+            .orderbook_state
+            .selected_market_index
+            .min(sorted_markets.len().saturating_sub(1));
+        sorted_markets.get(idx).is_some_and(|m| m.closed)
+    });
+
+    if market_is_closed {
+        // Closed market - use fixed small height
+        MESSAGE_HEIGHT
+    } else if app.orderbook_state.is_loading {
+        // Keep the same height during loading to prevent layout jumps
+        app.orderbook_state.last_height.max(MESSAGE_HEIGHT)
+    } else if let Some(orderbook) = &app.orderbook_state.orderbook {
+        let asks_count = orderbook.asks.len().min(MAX_PER_SIDE);
+        let bids_count = orderbook.bids.len().min(MAX_PER_SIDE);
+        // Height = borders(2) + header(1) + asks + spread(1) + bids
+        let height = 2 + 1 + asks_count + 1 + bids_count;
+        (height as u16).max(MESSAGE_HEIGHT)
+    } else {
+        // No data yet, use last height or message height
+        app.orderbook_state.last_height.max(MESSAGE_HEIGHT)
+    }
+}
+
 /// Check if a click on the orderbook panel title should toggle the outcome
 /// Returns Some(OrderbookOutcome) if a tab was clicked, None otherwise
 /// The title format is: "{name0} - {name1}" starting at area.x + 1 (after border)

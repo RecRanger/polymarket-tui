@@ -1,7 +1,7 @@
 //! Header rendering functions (tabs, search input, portfolio info)
 
 use {
-    super::render_search_input,
+    super::utils::render_search_input,
     crate::trending_tui::state::{EventFilter, MainTab, SearchMode, TrendingAppState},
     ratatui::{
         Frame,
