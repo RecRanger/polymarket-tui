@@ -1905,7 +1905,7 @@ pub async fn run_trending_tui(
                 // Handle UserProfile popup
                 if matches!(app.popup, Some(PopupType::UserProfile)) {
                     match key.code {
-                        KeyCode::Esc => {
+                        KeyCode::Esc | KeyCode::Char('p') => {
                             app.close_popup();
                         },
                         KeyCode::Char('l') | KeyCode::Char('L') => {
