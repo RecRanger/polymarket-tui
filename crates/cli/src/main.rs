@@ -129,6 +129,9 @@ enum Commands {
         /// Minimum probability threshold (e.g., 0.99 for 99%)
         #[arg(long, default_value = "0.95")]
         min_prob: f64,
+        /// Maximum probability threshold (e.g., 0.99 for 99%)
+        #[arg(long, default_value = "1.0")]
+        max_prob: f64,
         /// Maximum number of markets to fetch
         #[arg(long, default_value = "500")]
         limit: usize,
@@ -480,10 +483,11 @@ async fn main() -> Result<()> {
         }) => run_trending(order_by, ascending, limit).await,
         Some(Commands::Yield {
             min_prob,
+            max_prob,
             limit,
             min_volume,
             expires_in,
-        }) => run_yield(min_prob, limit, min_volume, expires_in).await,
+        }) => run_yield(min_prob, max_prob, limit, min_volume, expires_in).await,
     }
 }
 
@@ -775,6 +779,7 @@ fn parse_duration(s: &str) -> Option<i64> {
 
 async fn run_yield(
     min_prob: f64,
+    max_prob: f64,
     limit: usize,
     min_volume: f64,
     expires_in: Option<String>,
@@ -791,8 +796,9 @@ async fn run_yield(
     }
 
     log_info!(
-        "🔍 Searching for markets with outcomes >= {:.1}% probability{}...",
+        "🔍 Searching for markets with outcomes {:.1}%-{:.1}% probability{}...",
         min_prob * 100.0,
+        max_prob * 100.0,
         expires_in
             .as_ref()
             .map(|s| format!(" expiring within {}", s))
@@ -862,6 +868,7 @@ async fn run_yield(
         for (i, price_str) in market.outcome_prices.iter().enumerate() {
             if let Ok(price) = price_str.parse::<f64>()
                 && price >= min_prob
+                && price <= max_prob
             {
                 let outcome = market
                     .outcomes
@@ -899,8 +906,9 @@ async fn run_yield(
 
     if opportunities.is_empty() {
         log_info!(
-            "No markets found with outcomes >= {:.1}% and volume >= ${:.0}",
+            "No markets found with outcomes {:.1}%-{:.1}% probability and volume >= ${:.0}",
             min_prob * 100.0,
+            max_prob * 100.0,
             min_volume
         );
         return Ok(());

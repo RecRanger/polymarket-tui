@@ -660,6 +660,7 @@ pub async fn fetch_market_prices_batch(
 /// Fetch yield opportunities from the Gamma API
 pub async fn fetch_yield_opportunities(
     min_prob: f64,
+    max_prob: f64,
     limit: usize,
     min_volume: f64,
 ) -> Vec<YieldOpportunity> {
@@ -710,8 +711,7 @@ pub async fn fetch_yield_opportunities(
         for (i, price_str) in market.outcome_prices.iter().enumerate() {
             if let Ok(price) = price_str.parse::<f64>()
                 && price >= min_prob
-                && price < 1.0
-            // Skip 100% price (no yield)
+                && price <= max_prob
             {
                 let outcome = market
                     .outcomes
@@ -754,19 +754,23 @@ pub async fn fetch_yield_opportunities(
 pub fn spawn_yield_fetch(app_state: Arc<TokioMutex<TrendingAppState>>) {
     let app_state_clone = Arc::clone(&app_state);
     tokio::spawn(async move {
-        let (min_prob, min_volume) = {
+        let (min_prob, min_volume, max_prob) = {
             let mut app = app_state.lock().await;
             app.yield_state.is_loading = true;
-            (app.yield_state.min_prob, app.yield_state.min_volume)
+            (
+                app.yield_state.min_prob,
+                app.yield_state.min_volume,
+                app.yield_state.max_prob,
+            )
         };
 
         log_info!(
-            "Fetching yield opportunities (min_prob: {:.0}%)...",
-            min_prob * 100.0
+            "Fetching yield opportunities (prob: {:.1}%-{:.1}%)...",
+            min_prob * 100.0,
+            max_prob * 100.0
         );
 
-        let opportunities = fetch_yield_opportunities(min_prob, 500, min_volume).await;
-
+        let opportunities = fetch_yield_opportunities(min_prob, max_prob, 500, min_volume).await;
         let slug_to_fetch = {
             let mut app = app_state.lock().await;
             app.yield_state.opportunities = opportunities;

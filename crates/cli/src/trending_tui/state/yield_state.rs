@@ -36,6 +36,7 @@ pub struct YieldState {
     pub scroll: usize,
     pub is_loading: bool,
     pub min_prob: f64,
+    pub max_prob: f64,
     pub min_volume: f64,
     pub sort_by: YieldSortBy,
     pub filter_query: String, // Current filter query
@@ -81,6 +82,7 @@ impl YieldState {
             scroll: 0,
             is_loading: false,
             min_prob: 0.95,
+            max_prob: 1.0,
             min_volume: 0.0,
             sort_by: YieldSortBy::Return,
             filter_query: String::new(),
