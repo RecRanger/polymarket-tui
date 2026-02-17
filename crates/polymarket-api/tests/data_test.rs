@@ -1,6 +1,6 @@
 use polymarket_api::data::{
-    Activity, ActivitySortBy, ActivityType, DataClient, DataTrade, Portfolio, Position,
-    SortDirection, TradeSide,
+    Activity, ActivitySortBy, ActivityType, DataClient, DataTrade, Position, SortDirection,
+    TradeSide,
 };
 
 // ============================================================================

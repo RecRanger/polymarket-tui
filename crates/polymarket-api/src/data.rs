@@ -51,14 +51,19 @@ pub struct Position {
     #[serde(rename = "currentValue", default)]
     pub current_value: Option<f64>,
     #[serde(rename = "cashPnl", default)]
+    /// Cash profit and loss (profit minus loss)
     pub cash_pnl: Option<f64>,
     #[serde(rename = "percentPnl", default)]
+    /// Percentage profit and loss (profit minus loss as a percentage)
     pub percent_pnl: Option<f64>,
     #[serde(rename = "totalBought", default)]
+    /// Total amount bought
     pub total_bought: Option<f64>,
     #[serde(rename = "realizedPnl", default)]
+    /// Realized profit and loss (profit minus loss for closed positions)
     pub realized_pnl: Option<f64>,
     #[serde(rename = "percentRealizedPnl", default)]
+    /// Percentage of realized profit and loss (profit minus loss for closed positions as a percentage)
     pub percent_realized_pnl: Option<f64>,
     #[serde(rename = "curPrice", default)]
     pub cur_price: Option<f64>,
@@ -88,13 +93,6 @@ pub struct Position {
     pub quantity: Option<String>,
     #[serde(default)]
     pub value: Option<String>,
-}
-
-/// Portfolio summary
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Portfolio {
-    pub total_value: Option<String>,
-    pub positions: Vec<Position>,
 }
 
 /// Activity type enum
@@ -328,34 +326,58 @@ impl DataClient {
         Ok(trades)
     }
 
-    /// Get user positions (requires authentication)
+    /// Get current (open) user positions.
+    /// 
+    /// Does not require authentication.
+    ///
+    /// # Arguments
+    /// * `user_address` - The user's wallet address (0x-prefixed, 40 hex chars)
+    ///
+    /// # Returns
+    /// A vector of `Position` structs representing all of the user's current (open) positions, performing
+    /// pagination in the request as required to fetch all results.
+    ///
+    /// # Notes
+    /// See also: `get_positions_filtered` for fine-grained control over pagination and filtering.
     pub async fn get_positions(&self, user_address: &str) -> Result<Vec<Position>> {
         let url = format!("{}/positions", DATA_API_BASE);
-        let params = [("user", user_address)];
-        let positions: Vec<Position> = self
-            .client
-            .get(&url)
-            .query(&params)
-            .send()
-            .await?
-            .json()
-            .await?;
-        Ok(positions)
-    }
+        let limit = 500; // Valid range: 0-500.
+        let mut all_positions: Vec<Position> = Vec::new();
 
-    /// Get portfolio for a user (requires authentication)
-    pub async fn get_portfolio(&self, user_address: &str) -> Result<Portfolio> {
-        let url = format!("{}/portfolio", DATA_API_BASE);
-        let params = [("user", user_address)];
-        let portfolio: Portfolio = self
-            .client
-            .get(&url)
-            .query(&params)
-            .send()
-            .await?
-            .json()
-            .await?;
-        Ok(portfolio)
+        // Cartesian product of mergeable and redeemable (true/false).
+        let combos = [(true, true), (true, false), (false, true), (false, false)];
+        for (mergeable, redeemable) in combos {
+            let mut offset = 0;
+            loop {
+                let params = [
+                    ("user", user_address),
+                    ("limit", &limit.to_string()),
+                    ("offset", &offset.to_string()),
+                    ("mergeable", &mergeable.to_string()),
+                    ("redeemable", &redeemable.to_string()),
+                ];
+
+                let positions: Vec<Position> = self
+                    .client
+                    .get(&url)
+                    .query(&params)
+                    .send()
+                    .await?
+                    .json()
+                    .await?;
+
+                let count = positions.len();
+                all_positions.extend(positions);
+
+                if count < (limit as usize) {
+                    break;
+                }
+
+                offset += limit;
+            }
+        }
+
+        Ok(all_positions)
     }
 
     /// Get user activity (trades, splits, merges, redeems, rewards, conversions)
