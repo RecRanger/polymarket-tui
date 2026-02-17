@@ -17,7 +17,9 @@ use {
     display_trait::TradeDisplay,
     polymarket_api::{
         ClobClient, DataClient, GammaClient, MarketUpdateFormatter, PolymarketWebSocket,
-        RTDSClient, default_cache_dir, lock_mutex,
+        RTDSClient,
+        data::{ClosedPosition, Position},
+        default_cache_dir, lock_mutex,
     },
     std::{
         collections::HashMap,
@@ -141,6 +143,12 @@ enum Commands {
         /// Only show events expiring within this duration (e.g., "24h", "7d", "30d")
         #[arg(long)]
         expires_in: Option<String>,
+    },
+    /// Fetch info about a specific user
+    User {
+        /// User address, starting with "0x"
+        #[arg(value_name = "USER")]
+        user: String,
     },
 }
 
@@ -488,6 +496,7 @@ async fn main() -> Result<()> {
             min_volume,
             expires_in,
         }) => run_yield(min_prob, max_prob, limit, min_volume, expires_in).await,
+        Some(Commands::User { user }) => run_user(user).await,
     }
 }
 
@@ -980,6 +989,74 @@ async fn run_yield(
 
     println!("\n💡 Tip: Higher returns = higher risk. Check liquidity before trading.");
 
+    Ok(())
+}
+
+/// Handler for the `user` subcommand, which summarizes info about a user.
+async fn run_user(user: String) -> Result<()> {
+    use polymarket_api::DataClient;
+    println!("Fetching info for user: {}\n", user);
+    let data_client = DataClient::new();
+
+    // Fetch all positions for the user
+    let open_positions: Vec<Position> = data_client
+        .get_positions(&user)
+        .await
+        .context("Failed to fetch open user positions")?;
+    let closed_positions: Vec<ClosedPosition> = data_client
+        .get_closed_positions(&user)
+        .await
+        .context("Failed to fetch closed user positions")?;
+
+    // Total Position Value (TPV)
+    let open_tpv: f64 = open_positions.iter().filter_map(|p| p.current_value).sum();
+
+    // Biggest Win (Closed Positions), based on the amount extra received.
+    let biggest_win = closed_positions.iter().max_by(|a, b| {
+        a.realized_pnl
+            .partial_cmp(&b.realized_pnl)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // Profit / Loss Calculations
+    let open_pnl: f64 = open_positions
+        .iter()
+        .map(|p| p.cash_pnl.unwrap_or(0.0))
+        .sum();
+
+    let closed_pnl: f64 = closed_positions.iter().map(|p| p.realized_pnl).sum();
+    let total_pnl = open_pnl + closed_pnl;
+
+    // Output
+    println!("User: {}\n", user);
+
+    println!("Total Position Value: ${:.2}", open_tpv);
+
+    if let Some(win) = biggest_win {
+        let amount_paid = win.total_bought - win.realized_pnl;
+        println!(
+            "Biggest Win: ${:.2} -> ${:.2} ({:+.2}%) ({})",
+            amount_paid,
+            win.realized_pnl,
+            (win.realized_pnl / amount_paid) * 100.0,
+            win.title.trim()
+        );
+    } else {
+        println!("Biggest Win: N/A");
+    }
+
+    println!(
+        "Total Predictions: {} (Open: {}, Closed: {})",
+        open_positions.len() + closed_positions.len(),
+        open_positions.len(),
+        closed_positions.len()
+    );
+
+    println!("Current Profit/Loss:");
+    println!("  All Positions:    ${:.2}", total_pnl);
+    println!("  Open Positions:   ${:.2}", open_pnl);
+    println!("  Closed Positions: ${:.2}", closed_pnl);
+    // TODO: Need to integrate P&L from trades as well.
     Ok(())
 }
 
