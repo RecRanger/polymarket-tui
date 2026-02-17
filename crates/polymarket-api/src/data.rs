@@ -34,7 +34,7 @@ pub struct DataTrade {
     pub transaction_hash: String,
 }
 
-/// User position with comprehensive fields
+/// User position (current, open).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Position {
     #[serde(rename = "proxyWallet", default)]
@@ -93,6 +93,57 @@ pub struct Position {
     pub quantity: Option<String>,
     #[serde(default)]
     pub value: Option<String>,
+}
+
+/// User position (closed).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClosedPosition {
+    #[serde(rename = "proxyWallet", default)]
+    pub proxy_wallet: Option<String>,
+
+    pub asset: String,
+
+    #[serde(rename = "conditionId", alias = "condition_id")]
+    pub condition_id: String,
+
+    #[serde(rename = "avgPrice")]
+    pub avg_price: f64,
+
+    #[serde(rename = "totalBought")]
+    pub total_bought: f64,
+
+    #[serde(rename = "realizedPnl")]
+    /// Realized profit and loss (profit minus loss for closed positions)
+    pub realized_pnl: f64,
+
+    #[serde(rename = "curPrice")]
+    pub cur_price: f64,
+
+    pub timestamp: i64,
+
+    pub title: String,
+
+    pub slug: String,
+
+    #[serde(default)]
+    pub icon: Option<String>,
+
+    #[serde(rename = "eventSlug", alias = "event_slug")]
+    pub event_slug: String,
+
+    pub outcome: String,
+
+    #[serde(rename = "outcomeIndex", alias = "outcome_index")]
+    pub outcome_index: i32,
+
+    #[serde(rename = "oppositeOutcome", default)]
+    pub opposite_outcome: Option<String>,
+
+    #[serde(rename = "oppositeAsset", default)]
+    pub opposite_asset: Option<String>,
+
+    #[serde(rename = "endDate", default)]
+    pub end_date: Option<String>,
 }
 
 /// Activity type enum
@@ -327,7 +378,7 @@ impl DataClient {
     }
 
     /// Get current (open) user positions.
-    /// 
+    ///
     /// Does not require authentication.
     ///
     /// # Arguments
@@ -375,6 +426,51 @@ impl DataClient {
 
                 offset += limit;
             }
+        }
+
+        Ok(all_positions)
+    }
+
+    /// Get closed user positions.
+    ///
+    /// Does not require authentication.
+    ///
+    /// # Arguments
+    /// * `user_address` - The user's wallet address (0x-prefixed, 40 hex chars)
+    ///
+    /// # Returns
+    /// A vector of `ClosedPosition` structs representing all of the user's closed positions, performing
+    /// pagination in the request as required to fetch all results.
+    pub async fn get_closed_positions(&self, user_address: &str) -> Result<Vec<ClosedPosition>> {
+        let url = format!("{}/closed-positions", DATA_API_BASE);
+        let limit = 50; // Valid range: 0-50.
+        let mut all_positions: Vec<ClosedPosition> = Vec::new();
+
+        let mut offset = 0;
+        loop {
+            let params = [
+                ("user", user_address),
+                ("limit", &limit.to_string()),
+                ("offset", &offset.to_string()),
+            ];
+
+            let positions: Vec<ClosedPosition> = self
+                .client
+                .get(&url)
+                .query(&params)
+                .send()
+                .await?
+                .json()
+                .await?;
+
+            let count = positions.len();
+            all_positions.extend(positions);
+
+            if count < (limit as usize) {
+                break;
+            }
+
+            offset += limit;
         }
 
         Ok(all_positions)
