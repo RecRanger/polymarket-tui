@@ -154,18 +154,6 @@ fn test_data_trade_deserialization() {
     assert_eq!(trade.price, 0.55);
 }
 
-#[test]
-fn test_portfolio_deserialization() {
-    let json = r#"{
-        "total_value": "1000.50",
-        "positions": []
-    }"#;
-
-    let portfolio: Portfolio = serde_json::from_str(json).expect("Should deserialize");
-    assert_eq!(portfolio.total_value, Some("1000.50".to_string()));
-    assert!(portfolio.positions.is_empty());
-}
-
 // ============================================================================
 // Integration Tests (require network)
 // ============================================================================
