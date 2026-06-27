@@ -70,6 +70,9 @@ Or build from source:
 git clone https://github.com/penso/polymarket-tui
 cd polymarket-tui
 cargo build --release
+
+# Install from source:
+cargo install --path crates/cli
 ```
 
 ## Usage
